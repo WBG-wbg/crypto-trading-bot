@@ -315,6 +315,89 @@
         .auto-refresh input {
             cursor: pointer;
         }
+        
+        /* 市场情绪分析样式 */
+        .sentiment-section {
+            background: linear-gradient(135deg, rgba(156, 39, 176, 0.1), rgba(123, 31, 162, 0.1));
+            border-left: 3px solid #9c27b0;
+        }
+        
+        .sentiment-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        
+        .sentiment-item {
+            background: rgba(0,0,0,0.2);
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 3px solid #9c27b0;
+        }
+        
+        .sentiment-item.positive {
+            border-left-color: #4caf50;
+        }
+        
+        .sentiment-item.negative {
+            border-left-color: #f44336;
+        }
+        
+        .sentiment-item.net {
+            border-left-width: 4px;
+        }
+        
+        .sentiment-item.level {
+            border-left-color: #ffc107;
+        }
+        
+        .sentiment-label {
+            font-size: 12px;
+            color: rgba(255,255,255,0.6);
+            margin-bottom: 6px;
+        }
+        
+        .sentiment-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+        }
+        
+        .sentiment-detail {
+            margin-top: 12px;
+        }
+        
+        .sentiment-detail details {
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        .sentiment-detail summary {
+            font-size: 13px;
+            color: rgba(255,255,255,0.7);
+            user-select: none;
+        }
+        
+        .sentiment-detail summary:hover {
+            color: #fff;
+        }
+        
+        .sentiment-detail pre {
+            margin-top: 10px;
+            padding: 12px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: rgba(255,255,255,0.9);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
@@ -592,6 +675,15 @@
                         </div>
                         ` : ''}
                         
+                        ${log.sentiment_analysis ? `
+                        <div class="log-section sentiment-section">
+                            <h4>🎭 市场情绪分析</h4>
+                            <div class="sentiment-content">
+                                ${formatSentimentAnalysis(log.sentiment_analysis)}
+                            </div>
+                        </div>
+                        ` : ''}
+                        
                         <div class="log-section">
                             <h4>🤖 交易决策</h4>
                             <p>${escapeHtml(truncate(log.decision_content || '无决策内容', 500))}</p>
@@ -606,6 +698,66 @@
                     </div>
                 </div>
             `;
+        }
+        
+        // 格式化市场情绪分析
+        function formatSentimentAnalysis(sentimentText) {
+            if (!sentimentText) return '<p>无情绪数据</p>';
+            
+            // 提取关键信息
+            const positiveMatch = sentimentText.match(/正面情绪比率[：:]\s*([\d.]+)%/);
+            const negativeMatch = sentimentText.match(/负面情绪比率[：:]\s*([\d.]+)%/);
+            const netMatch = sentimentText.match(/净情绪值[：:]\s*([-+]?[\d.]+)/);
+            const levelMatch = sentimentText.match(/情绪等级[：:]\s*([^\n]+)/);
+            const timeMatch = sentimentText.match(/数据时间[：:]\s*([^\(（]+)/);
+            
+            if (positiveMatch && negativeMatch && netMatch && levelMatch) {
+                const positive = parseFloat(positiveMatch[1]);
+                const negative = parseFloat(negativeMatch[1]);
+                const net = parseFloat(netMatch[1]);
+                const level = levelMatch[1].trim();
+                const dataTime = timeMatch ? timeMatch[1].trim() : 'N/A';
+                
+                // 确定颜色
+                let netColor = '#fff';
+                if (net > 0.3) netColor = '#4caf50';
+                else if (net < -0.3) netColor = '#f44336';
+                else netColor = '#ff9800';
+                
+                return `
+                    <div class="sentiment-grid">
+                        <div class="sentiment-item">
+                            <div class="sentiment-label">📊 数据时间</div>
+                            <div class="sentiment-value">${dataTime}</div>
+                        </div>
+                        <div class="sentiment-item positive">
+                            <div class="sentiment-label">😊 正面情绪</div>
+                            <div class="sentiment-value">${positive.toFixed(2)}%</div>
+                        </div>
+                        <div class="sentiment-item negative">
+                            <div class="sentiment-label">😔 负面情绪</div>
+                            <div class="sentiment-value">${negative.toFixed(2)}%</div>
+                        </div>
+                        <div class="sentiment-item net" style="border-left-color: ${netColor};">
+                            <div class="sentiment-label">🎯 净情绪值</div>
+                            <div class="sentiment-value" style="color: ${netColor};">${net >= 0 ? '+' : ''}${net.toFixed(4)}</div>
+                        </div>
+                        <div class="sentiment-item level">
+                            <div class="sentiment-label">📈 情绪等级</div>
+                            <div class="sentiment-value">${level}</div>
+                        </div>
+                    </div>
+                    <div class="sentiment-detail">
+                        <details>
+                            <summary>查看完整情绪报告</summary>
+                            <pre>${escapeHtml(sentimentText)}</pre>
+                        </details>
+                    </div>
+                `;
+            }
+            
+            // 如果解析失败，显示原始文本
+            return `<p>${escapeHtml(truncate(sentimentText, 300))}</p>`;
         }
         
         // 辅助函数

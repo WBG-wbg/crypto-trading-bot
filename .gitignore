@@ -1,5 +1,6 @@
 .venv
 results
+crypto_results
 env/
 __pycache__/
 .DS_Store
@@ -9,3 +10,4 @@ eval_results/
 eval_data/
 *.egg-info/
 .env
+uv.lock

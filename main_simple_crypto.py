@@ -15,12 +15,118 @@ from dotenv import load_dotenv
 from datetime import datetime
 import sys
 import os
+import json
+from pathlib import Path
 
 load_dotenv()
 
 # Web监控相关
 monitor = None
 web_enabled = False
+
+
+def save_results(config, symbol, trade_date, final_state, decision, execution_result=None):
+    """保存分析结果到文件"""
+    try:
+        # 创建结果目录
+        results_dir = Path(config['results_dir'])
+        symbol_clean = symbol.replace('/', '_')
+        symbol_dir = results_dir / symbol_clean
+        symbol_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 生成文件名（包含时间戳）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{symbol_clean}_{trade_date}_{timestamp}"
+        
+        # 提取最后的状态
+        last_state = list(final_state.values())[0] if final_state else {}
+        
+        # 解析决策类型
+        decision_type = 'UNKNOWN'
+        if '**最终决策: BUY**' in decision or '**最终决策: LONG**' in decision:
+            decision_type = 'BUY'
+        elif '**最终决策: SELL**' in decision or '**最终决策: SHORT**' in decision:
+            decision_type = 'SELL'
+        elif '**最终决策: CLOSE**' in decision:
+            decision_type = 'CLOSE'
+        elif '**最终决策: HOLD**' in decision:
+            decision_type = 'HOLD'
+        
+        # 构建结果数据
+        result_data = {
+            'timestamp': datetime.now().isoformat(),
+            'trade_date': trade_date,
+            'symbol': symbol,
+            'timeframe': config.get('crypto_timeframe', '1h'),
+            'decision_type': decision_type,
+            'decision_content': decision,
+            'market_analysis': last_state.get('market_report', ''),
+            'crypto_analysis': last_state.get('crypto_analysis_report', ''),
+            'sentiment_analysis': last_state.get('sentiment_report', ''),
+            'execution_result': execution_result,
+            'config': {
+                'leverage': config.get('binance_leverage'),
+                'position_size': config.get('position_size'),
+                'test_mode': config.get('binance_test_mode'),
+                'auto_execute': config.get('auto_execute')
+            }
+        }
+        
+        # 保存为 JSON 文件
+        json_file = symbol_dir / f"{filename}.json"
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(result_data, f, ensure_ascii=False, indent=2)
+        
+        # 保存为纯文本文件（便于阅读）
+        txt_file = symbol_dir / f"{filename}.txt"
+        with open(txt_file, 'w', encoding='utf-8') as f:
+            f.write(f"{'='*80}\n")
+            f.write(f"交易分析报告 - {symbol}\n")
+            f.write(f"{'='*80}\n")
+            f.write(f"日期: {trade_date}\n")
+            f.write(f"时间戳: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"K线周期: {config.get('crypto_timeframe', '1h')}\n")
+            f.write(f"杠杆倍数: {config.get('binance_leverage')}x\n")
+            f.write(f"测试模式: {'是' if config.get('binance_test_mode') else '否'}\n")
+            f.write(f"自动执行: {'是' if config.get('auto_execute') else '否'}\n")
+            f.write(f"{'='*80}\n\n")
+            
+            f.write(f"{'─'*80}\n")
+            f.write(f"📊 市场技术分析\n")
+            f.write(f"{'─'*80}\n")
+            f.write(last_state.get('market_report', '无数据') + "\n\n")
+            
+            f.write(f"{'─'*80}\n")
+            f.write(f"💰 加密货币专属分析\n")
+            f.write(f"{'─'*80}\n")
+            f.write(last_state.get('crypto_analysis_report', '无数据') + "\n\n")
+            
+            f.write(f"{'─'*80}\n")
+            f.write(f"🎭 市场情绪分析\n")
+            f.write(f"{'─'*80}\n")
+            f.write(last_state.get('sentiment_report', '无数据') + "\n\n")
+            
+            f.write(f"{'='*80}\n")
+            f.write(f"📈 最终交易决策\n")
+            f.write(f"{'='*80}\n")
+            f.write(f"决策类型: {decision_type}\n\n")
+            f.write(decision + "\n\n")
+            
+            if execution_result:
+                f.write(f"{'─'*80}\n")
+                f.write(f"⚡ 执行结果\n")
+                f.write(f"{'─'*80}\n")
+                f.write(str(execution_result) + "\n")
+        
+        ColorLogger.success(f"结果已保存到:")
+        print(f"  📄 JSON: {json_file}")
+        print(f"  📝 文本: {txt_file}")
+        
+        return json_file, txt_file
+        
+    except Exception as e:
+        ColorLogger.error(f"保存结果失败: {e}")
+        return None, None
 
 
 def run_analysis(config):
@@ -67,6 +173,7 @@ def run_analysis(config):
                 'decision_content': decision,
                 'market_analysis': last_state.get('market_report', ''),
                 'crypto_analysis': last_state.get('crypto_analysis_report', ''),
+                'sentiment_analysis': last_state.get('sentiment_report', ''),
                 'position_info': position_info,
                 'execution_result': None
             }
@@ -88,6 +195,10 @@ def run_analysis(config):
             monitor.trading_logs[0]['execution_result'] = str(execution_result)
     else:
         ColorLogger.info("自动执行模式已关闭，请手动审核交易决策")
+    
+    # 保存结果到文件
+    print()  # 空一行
+    save_results(config, config['crypto_symbol'], trade_date, final_state, decision, execution_result)
     
     print(f"\n{ColorLogger.BRIGHT_GREEN}{'='*80}{ColorLogger.RESET}")
     print(f"{ColorLogger.BOLD}{ColorLogger.BRIGHT_GREEN}🎉 本次分析完成！{ColorLogger.RESET}")
@@ -124,7 +235,8 @@ def main():
     print(f"{ColorLogger.BOLD}{ColorLogger.CYAN}📊 工作流程:{ColorLogger.RESET}")
     print(f"{ColorLogger.CYAN}   1️⃣  市场分析师 → 技术指标分析{ColorLogger.RESET}")
     print(f"{ColorLogger.CYAN}   2️⃣  加密货币分析师 → 资金费率、订单簿分析{ColorLogger.RESET}")
-    print(f"{ColorLogger.CYAN}   3️⃣  交易员 → 综合决策{ColorLogger.RESET}")
+    print(f"{ColorLogger.CYAN}   3️⃣  市场情绪分析师 → CryptoOracle 情绪指标{ColorLogger.RESET}")
+    print(f"{ColorLogger.CYAN}   4️⃣  交易员 → 综合决策{ColorLogger.RESET}")
     print(f"{ColorLogger.CYAN}{'─' * 80}{ColorLogger.RESET}\n")
     
     # 检查命令行参数，判断是单次运行还是循环运行

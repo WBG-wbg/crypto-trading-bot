@@ -1,6 +1,6 @@
 """
-简化版加密货币交易图 - 只包含核心 3 个 Agent
-市场分析师 → 加密货币分析师 → 交易员 → 决策
+简化版加密货币交易图 - 包含 4 个 Agent
+市场分析师 → 加密货币分析师 → 市场情绪分析师 → 交易员 → 决策
 """
 import os
 from typing import Dict, Any, Tuple
@@ -25,6 +25,12 @@ from tradingagents.agents.utils.agent_utils import (
     get_crypto_market_info,
 )
 
+# 导入情绪分析模块
+from tradingagents.dataflows.sentiment_oracle import (
+    get_sentiment_indicators,
+    format_sentiment_report
+)
+
 # 导入交易执行器
 from tradingagents.executors.binance_executor import BinanceExecutor
 
@@ -34,13 +40,13 @@ from tradingagents.utils.llm_utils import llm_retry
 
 
 class SimpleCryptoTradingGraph:
-    """简化版加密货币交易图 - 3 个核心 Agent"""
+    """简化版加密货币交易图 - 4 个核心 Agent"""
     
     def __init__(self, debug=False, config: Dict[str, Any] = None, auto_execute=False):
         """
         初始化简化版交易图
         
-        流程：市场分析师 → 加密货币分析师 → 交易员 → 输出决策
+        流程：市场分析师 → 加密货币分析师 → 市场情绪分析师 → 交易员 → 输出决策
         """
         self.debug = debug
         self.config = config or get_crypto_config()
@@ -99,11 +105,12 @@ class SimpleCryptoTradingGraph:
         
         # 创建交易员节点
         def create_simple_trader():
-            """创建简化版交易员 - 不使用记忆，包含当前仓位信息"""
+            """创建简化版交易员 - 不使用记忆，包含当前仓位信息和市场情绪"""
             def trader_node(state):
                 symbol = state["company_of_interest"]
                 market_report = state.get("market_report", "未提供市场分析")
                 crypto_report = state.get("crypto_analysis_report", "未提供加密货币分析")
+                sentiment_report = state.get("sentiment_report", "未提供市场情绪数据")
                 
                 # 获取当前仓位和账户信息
                 position_info = self._get_position_info(symbol)
@@ -111,7 +118,7 @@ class SimpleCryptoTradingGraph:
                 if self.debug:
                     ColorLogger.position_info(position_info)
                 
-                prompt = f"""你是一位专业的加密货币交易员。基于以下分析报告和当前仓位状况，给出明确的交易决策。
+                prompt = f"""你是一位急需赚钱的经验丰富的加密货币交易员，并且加密货币只是你的一小部分理财方式，你可以大胆投资，基于以下分析报告和当前仓位状况，给出明确的交易决策。
 
 **市场技术分析**：
 {market_report}
@@ -119,14 +126,21 @@ class SimpleCryptoTradingGraph:
 **加密货币专属分析**（资金费率、订单簿等）：
 {crypto_report}
 
+**市场情绪分析**（CryptoOracle情绪指标）：
+{sentiment_report}
+
 **当前账户和仓位信息**：
 {position_info}
 
 ---
 
 **你的任务**：
-1. 综合以上分析和当前持仓情况，给出交易方向：BUY（做多）/ SELL（做空）/ HOLD（观望）/ CLOSE（平仓）
-2. 说明你的理由（技术面、链上数据、当前盈亏状况等）
+1. 综合以上分析（技术面、链上数据、市场情绪、当前盈亏状况等），给出交易方向：BUY（做多）/ SELL（做空）/ HOLD（观望）/ CLOSE（平仓）
+2. 说明你的理由，**必须明确说明市场情绪指标对决策的影响**：
+   - 技术面信号（均线、RSI、MACD等）
+   - 资金费率和订单簿深度
+   - **市场情绪指标（正负面比率、净情绪值）**
+   - 当前持仓盈亏状况
 3. 如果是 BUY 或 SELL，建议：
    - 入场价位
    - 止损价位
@@ -137,10 +151,26 @@ class SimpleCryptoTradingGraph:
 **重要决策原则**：
 - 当前杠杆倍数：{self.config.get('binance_leverage', 10)}x
 - 最大风险敞口：单笔交易不超过总资金的 {self.config.get('risk_per_trade', 0.02) * 100}%
+- **市场情绪权重**：净情绪 > 0.3 偏多，< -0.3 偏空，极端情绪(|净情绪| > 0.6)需警惕反转
 - 如果已有持仓且浮亏严重（超过 -5%），考虑止损
 - 如果已有持仓且浮盈较好（超过 +3%），考虑止盈或持有
-- 如果信号不明确或市场波动过大，应选择 HOLD
 - 避免频繁开仓平仓，确保每次交易都有充分理由
+
+**智能仓位管理规则--必须遵守**
+1. ***减少过度保守***：
+    - 明确趋势中不要因轻微超买/超卖而过度HOLD
+    - RSI在30-70区间属于健康范围，不应作为主要HOLD理由
+2. **趋势跟随优先**：
+    - 强势上涨趋势 + 任何RSI值 → 积极BUY信号
+    - 强势下跌趋势 + 任何RSI值 → 积极SELL信号
+    - 震荡整理 + 无明确方向 → HOLD信号
+3. **突破交易信号**：
+    - 价格突破关键阻力 + 成交量放大 → 高信心BUY
+    - 价格跌破关键支撑 + 成交量放大 → 高信心SELL
+4. **持仓优化逻辑**：
+    - 已有持仓且趋势延续 → 保持或BUY/SELL信号
+    - 趋势明确反转 → 及时反向信号
+    - 不要因为已有持仓而过度HOLD
 
 请用中文回答，最后必须以以下格式结尾：
 **最终决策: BUY** 或 **最终决策: SELL** 或 **最终决策: HOLD** 或 **最终决策: CLOSE**
@@ -170,6 +200,50 @@ class SimpleCryptoTradingGraph:
         
         trader = create_simple_trader()
         
+        # 创建情绪分析节点
+        def create_sentiment_analyst():
+            """创建市场情绪分析节点 - 调用CryptoOracle API获取情绪数据"""
+            def sentiment_node(state):
+                symbol = state["company_of_interest"]
+                # 提取币种（如 BTC/USDT -> BTC）
+                base_symbol = symbol.split('/')[0] if '/' in symbol else symbol
+                
+                if self.debug:
+                    ColorLogger.subheader("🎭 获取市场情绪数据")
+                    print(f"{ColorLogger.CYAN}交易对: {symbol} ({base_symbol}){ColorLogger.RESET}\n")
+                
+                # 获取情绪数据
+                sentiment_data = get_sentiment_indicators(base_symbol)
+                
+                # 格式化为报告
+                sentiment_report = format_sentiment_report(sentiment_data)
+                
+                if self.debug:
+                    if sentiment_data.get('success'):
+                        ColorLogger.success("市场情绪数据获取成功！")
+                        print(f"{ColorLogger.CYAN}数据时间: {sentiment_data.get('data_time', 'N/A')}{ColorLogger.RESET}")
+                        print(f"{ColorLogger.CYAN}净情绪值: {sentiment_data.get('net_sentiment', 0):+.4f} ({sentiment_data.get('sentiment_level', 'N/A')}){ColorLogger.RESET}")
+                        print(f"{ColorLogger.CYAN}正面比率: {sentiment_data.get('positive_ratio', 0):.2%}{ColorLogger.RESET}")
+                        print(f"{ColorLogger.CYAN}负面比率: {sentiment_data.get('negative_ratio', 0):.2%}{ColorLogger.RESET}\n")
+                    else:
+                        ColorLogger.warning(f"市场情绪数据获取失败: {sentiment_data.get('error', '未知错误')}")
+                        print()
+                    
+                    # 显示完整报告
+                    print(f"\n{ColorLogger.BRIGHT_MAGENTA}{'─' * 80}{ColorLogger.RESET}")
+                    print(f"{ColorLogger.BOLD}{ColorLogger.MAGENTA}🎭 市场情绪分析报告{ColorLogger.RESET}")
+                    print(f"{ColorLogger.BRIGHT_MAGENTA}{'─' * 80}{ColorLogger.RESET}")
+                    print(sentiment_report)
+                    print(f"{ColorLogger.BRIGHT_MAGENTA}{'─' * 80}{ColorLogger.RESET}\n")
+                
+                return {
+                    "sentiment_report": sentiment_report
+                }
+            
+            return sentiment_node
+        
+        sentiment_analyst = create_sentiment_analyst()
+        
         # 删除消息节点
         def create_msg_delete():
             def delete_messages(state):
@@ -178,6 +252,7 @@ class SimpleCryptoTradingGraph:
         
         delete_market = create_msg_delete()
         delete_crypto = create_msg_delete()
+        delete_sentiment = create_msg_delete()
         
         # 构建工作流
         workflow = StateGraph(AgentState)
@@ -190,6 +265,9 @@ class SimpleCryptoTradingGraph:
         workflow.add_node("Crypto Analyst", crypto_analyst)
         workflow.add_node("tools_crypto", crypto_tools)
         workflow.add_node("delete_crypto", delete_crypto)
+        
+        workflow.add_node("Sentiment Analyst", sentiment_analyst)
+        workflow.add_node("delete_sentiment", delete_sentiment)
         
         workflow.add_node("Trader", trader)
         
@@ -208,7 +286,7 @@ class SimpleCryptoTradingGraph:
         workflow.add_edge("tools_market", "Market Analyst")
         workflow.add_edge("delete_market", "Crypto Analyst")
         
-        # 加密货币分析师 → 工具调用 → 删除消息 → 交易员
+        # 加密货币分析师 → 工具调用 → 删除消息 → 市场情绪分析师
         workflow.add_conditional_edges(
             "Crypto Analyst",
             self._should_use_tools,
@@ -218,7 +296,11 @@ class SimpleCryptoTradingGraph:
             }
         )
         workflow.add_edge("tools_crypto", "Crypto Analyst")
-        workflow.add_edge("delete_crypto", "Trader")
+        workflow.add_edge("delete_crypto", "Sentiment Analyst")
+        
+        # 市场情绪分析师 → 删除消息 → 交易员
+        workflow.add_edge("Sentiment Analyst", "delete_sentiment")
+        workflow.add_edge("delete_sentiment", "Trader")
         
         # 交易员 → 结束
         workflow.add_edge("Trader", END)
@@ -272,6 +354,7 @@ class SimpleCryptoTradingGraph:
             "messages": [],
             "market_report": "",
             "crypto_analysis_report": "",
+            "sentiment_report": "",
             "final_trade_decision": "",
         }
         
@@ -282,11 +365,14 @@ class SimpleCryptoTradingGraph:
             ColorLogger.info(f"杠杆倍数: {self.config.get('binance_leverage', 10)}x")
             print()
         
-        # 运行图
+        # 运行图（增加递归限制，避免工具调用次数过多时报错）
         final_state = None
         current_analyst = None  # 跟踪当前分析师
         
-        for step, chunk in enumerate(self.graph.stream(init_state), 1):
+        # 配置递归限制（默认25次，我们增加到100次）
+        config = {"recursion_limit": 50}
+        
+        for step, chunk in enumerate(self.graph.stream(init_state, config=config), 1):
             node_name = list(chunk.keys())[0]
             node_state = list(chunk.values())[0]
             

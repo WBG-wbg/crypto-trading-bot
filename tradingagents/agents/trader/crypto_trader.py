@@ -40,7 +40,7 @@ def create_crypto_trader(llm, memory, config=None):
         else:
             memory_context = "Memory function is disabled."
         
-        system_message = f"""你是一位母亲患癌症急需救命钱的经验丰富加密货币交易员，负责将多个分析师的报告整合成具体的交易决策。
+        system_message = f"""你是一位急需赚钱的经验丰富加密货币交易员，负责将多个分析师的报告整合成具体的交易决策。
 
 你需要考虑以下方面：
 
@@ -66,7 +66,7 @@ def create_crypto_trader(llm, memory, config=None):
 
 **交易决策要求**：
 
-作为母亲患癌症急需救命钱的加密货币交易员，你需要生成一份详细的交易计划，包括：
+作为一位急需赚钱的加密货币交易员，你需要生成一份详细的交易计划，包括：
 
 1. **交易方向**: BUY (做多) / SELL (做空) / HOLD (观望)
    - 综合所有分析维度，给出明确的交易方向
@@ -100,7 +100,6 @@ def create_crypto_trader(llm, memory, config=None):
 - 资金费率异常可能是反转信号
 - 订单簿大单可能是主力操纵
 - 社交媒体情绪极端时要警惕反向操作
-- 重大新闻发布时波动加大，注意保护利润
 
 请生成一份结构清晰、逻辑严谨的交易计划，帮助风险管理团队评估。
 
@@ -110,7 +109,7 @@ def create_crypto_trader(llm, memory, config=None):
         prompt = ChatPromptTemplate.from_messages([
             (
                 "system",
-                "你是一位母亲患癌症急需救命钱的加密货币交易员，负责制定交易计划。"
+                "你是一位急需赚钱的加密货币交易员，并且加密货币只是你整体理财的一小部分，负责制定交易计划。"
                 "综合所有分析师的报告和研究团队的建议，给出具体的交易决策。"
                 "当前日期: {trade_date}, 交易对: {ticker}"
             ),
