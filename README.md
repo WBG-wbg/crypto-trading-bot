@@ -1,4 +1,4 @@
-# 🚀 TradingAgents - 加密货币智能交易系统
+# 🚀 TradingAgents - 加密货币智能交易系统（精简版）
 
 基于多智能体 AI 框架的比特币量化交易系统，使用 LangGraph 和 LLM 驱动的智能分析决策。
 
@@ -373,36 +373,46 @@ cat SECURITY_GUIDE.md
 ## 📊 项目结构
 
 ```
-TradingAgents/
-├── tradingagents/
-│   ├── agents/
-│   │   ├── analysts/
-│   │   │   ├── market_analyst.py       # 市场技术分析师
-│   │   │   └── crypto_analyst.py       # 加密货币分析师
-│   │   └── utils/
-│   │       ├── crypto_tools.py         # 加密货币工具（数据获取）
-│   │       └── agent_utils.py
-│   ├── dataflows/
-│   │   ├── crypto_ccxt.py              # CCXT 数据接口
-│   │   └── config.py
-│   ├── executors/
-│   │   └── binance_executor.py         # 币安交易执行器
-│   ├── graph/
-│   │   └── simple_crypto_graph.py      # 简化版交易图
-│   ├── utils/
-│   │   ├── logger.py                   # 彩色日志工具
-│   │   └── scheduler.py                # 智能调度器
-│   ├── web/
-│   │   ├── monitor.py                  # Web 监控服务
-│   │   └── templates/
-│   │       └── monitor.html            # 监控界面
-│   └── crypto_config.py                # 加密货币配置
-├── main_simple_crypto.py               # 主程序入口 ⭐
-├── .env                                # 环境变量配置
-├── env_template.txt                    # 配置模板（带详细注释）
-├── requirements.txt                    # 项目依赖
-├── SECURITY_GUIDE.md                   # 安全指南
-└── README.md                           # 本文档
+crypto-trading-bot/
+├── main_simple_crypto.py               # 主程序入口（唯一入口）⭐
+│
+└── tradingagents/
+    ├── agents/                          # 智能体模块
+    │   ├── analysts/
+    │   │   ├── market_analyst.py        # 市场技术分析师
+    │   │   └── crypto_analyst.py        # 加密货币分析师
+    │   ├── __init__.py                  # 模块导出
+    │   └── utils/
+    │       ├── agent_states.py          # 状态定义
+    │       ├── agent_utils.py           # 通用工具
+    │       ├── core_stock_tools.py      # 核心工具定义
+    │       ├── crypto_tools.py          # 加密货币专用工具
+    │       └── technical_indicators_tools.py
+    │
+    ├── dataflows/                       # 数据层
+    │   ├── __init__.py
+    │   ├── config.py                    # 数据源配置
+    │   ├── crypto_ccxt.py               # CCXT 数据接口
+    │   ├── interface.py                 # 数据路由接口
+    │   └── sentiment_oracle.py          # 情绪数据 API
+    │
+    ├── executors/                       # 交易执行器
+    │   ├── __init__.py
+    │   └── binance_executor.py          # 币安期货执行器
+    │
+    ├── graph/                           # 工作流图
+    │   └── simple_crypto_graph.py       # 4智能体工作流（唯一）
+    │
+    ├── utils/                           # 工具模块
+    │   ├── llm_utils.py                 # LLM 重试机制
+    │   ├── logger.py                    # 彩色日志工具
+    │   └── scheduler.py                 # 智能调度器
+    │
+    ├── web/                             # Web 监控
+    │   └── monitor.py                   # Flask 监控服务
+    │
+    ├── crypto_config.py                 # 配置管理
+    └── default_config.py                # 默认配置
 ```
 
 ---
@@ -440,6 +450,53 @@ TradingAgents/
 - ❌ 不要使用全部资金
 - ❌ 不要在不理解的情况下使用高杠杆
 - ❌ 不要在情绪波动时做决策
+
+---
+
+## 📦 项目精简说明
+
+### 精简成果（2025-11-09）
+
+本项目基于原始 TradingAgents 框架进行了大幅精简和优化：
+
+**删除的内容（45 个文件）**：
+- ❌ 股票交易系统（main.py、所有股票数据源）
+- ❌ 复杂版加密货币系统（main_crypto.py）
+- ❌ 未使用的智能体目录
+  - researchers/（多空研究员）
+  - risk_mgmt/（风险管理辩论团队）
+  - managers/（研究和风险管理器）
+  - trader/（独立交易员）
+- ❌ 未使用的分析师
+  - fundamentals_analyst（基本面）
+  - news_analyst（新闻）
+  - social_media_analyst（社交媒体）
+- ❌ 股票数据源（16 个文件）
+  - Alpha Vantage、yfinance、Google、Reddit 等
+- ❌ CLI 命令行工具
+- ❌ 冗余的图模块（8 个文件）
+
+**保留的核心功能**：
+- ✅ 市场技术分析（RSI、MACD、布林带等）
+- ✅ 加密货币专属分析（资金费率、订单簿）
+- ✅ 市场情绪分析（CryptoOracle API）
+- ✅ 币安期货交易执行
+- ✅ Web 监控界面
+- ✅ 智能调度系统
+- ✅ LLM 重试机制
+
+**修复的问题**：
+- 🔧 清理了 `interface.py` 的股票数据源导入
+- 🔧 清理了 `agent_utils.py` 的已删除工具导入
+- 🔧 清理了 `agents/__init__.py` 的已删除智能体导入
+
+**结果**：
+- 📊 **文件数量**：从 68 个减少到 23 个（-66%）
+- 🎯 **代码清晰**：无冗余代码，结构简洁
+- ⚡ **易于维护**：专注加密货币，降低复杂度
+- ✅ **完全可运行**：所有功能正常，无导入错误
+
+详细精简报告请查看：[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)
 
 ---
 

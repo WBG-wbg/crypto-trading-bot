@@ -11,3 +11,5 @@ eval_data/
 *.egg-info/
 .env
 uv.lock
+/.claude
+CLAUDE.md
