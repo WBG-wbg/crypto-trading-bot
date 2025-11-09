@@ -76,8 +76,7 @@ def create_crypto_analyst(llm):
                     "使用提供的工具来回答问题并取得进展。"
                     "如果你无法完全回答问题，没关系；另一个具有不同工具的助手会在你离开的地方继续。"
                     "尽你所能执行以取得进展。"
-                    "如果你或任何其他助手得到了最终交易提案: **BUY/HOLD/SELL**，"
-                    "请在你的回应前加上最终交易提案: **BUY/HOLD/SELL**，以便团队知道停止。"
+                    "你只需要客观地分析结果，并不需要给出买入或卖出的建议。"
                     "你可以使用以下工具: {tool_names}。\n{system_message}"
                     "当前日期是 {current_date}。我们要分析的加密货币是 {ticker}",
                 ),
@@ -99,13 +98,19 @@ def create_crypto_analyst(llm):
         
         result = invoke_with_retry()
         
-        report = ""
+        # 保存报告逻辑：
+        # 1. 如果没有工具调用，说明这是最终报告
+        # 2. 如果有工具调用，保持原有的报告（不覆盖）
+        report = state.get("crypto_analysis_report", "")  # 获取之前保存的报告
+        
         if len(result.tool_calls) == 0:
+            # 这是最终报告，保存它
             report = result.content
+        # 否则，如果还有工具调用，保持原有的 report（不变）
         
         return {
             "messages": [result],
-            "crypto_analysis_report": report,  # 新增的报告字段
+            "crypto_analysis_report": report,
         }
     
     return crypto_analyst_node

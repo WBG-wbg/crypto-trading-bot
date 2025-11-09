@@ -118,7 +118,7 @@ class SimpleCryptoTradingGraph:
                 if self.debug:
                     ColorLogger.position_info(position_info)
                 
-                prompt = f"""你是一位急需赚钱的经验丰富的加密货币交易员，并且加密货币只是你的一小部分理财方式，你可以大胆投资，基于以下分析报告和当前仓位状况，给出明确的交易决策。
+                prompt = f"""你是一位经验非常丰富的加密货币交易员，善于仓位管理和操作，基于以下分析报告和当前仓位状况，给出明确的交易决策。
 
 **市场技术分析**：
 {market_report}
@@ -156,6 +156,14 @@ class SimpleCryptoTradingGraph:
 - 如果已有持仓且浮盈较好（超过 +3%），考虑止盈或持有
 - 避免频繁开仓平仓，确保每次交易都有充分理由
 
+**⚠️ 持仓管理规则（必须严格遵守）**：
+- 🔴 如果当前持有多仓(LONG)，**禁止再发出 BUY 指令**，只能选择 HOLD 或 CLOSE
+- 🔴 如果当前持有空仓(SHORT)，**禁止再发出 SELL 指令**，只能选择 HOLD 或 CLOSE
+- ✅ 无持仓时，可以 BUY（开多）或 SELL（开空）或 HOLD（观望）
+- ✅ 有持仓时，可以 HOLD（继续持有）或 CLOSE（平仓）
+- ✅ 想要反向操作（如从多转空），必须先 CLOSE 平掉当前持仓，等下一轮再开新仓
+- ⚠️ 系统不支持加仓，重复开仓会被自动拒绝
+
 **智能仓位管理规则--必须遵守**
 1. ***减少过度保守***：
     - 明确趋势中不要因轻微超买/超卖而过度HOLD
@@ -191,9 +199,13 @@ class SimpleCryptoTradingGraph:
                 if self.debug:
                     ColorLogger.llm_response("交易员", response.content, max_lines=150)
                 
+                # 保留所有分析报告以便后续保存
                 return {
                     "final_trade_decision": response.content,
-                    "messages": [response]
+                    "messages": [response],
+                    "market_report": market_report,
+                    "crypto_analysis_report": crypto_report,
+                    "sentiment_report": sentiment_report
                 }
             
             return trader_node
@@ -478,25 +490,48 @@ class SimpleCryptoTradingGraph:
         print()
         
         try:
-            if action == "BUY":
-                ColorLogger.info("📈 正在开多单...")
-                result = self.executor.open_long(symbol, quantity)
-            elif action == "SELL":
-                ColorLogger.info("📉 正在开空单...")
-                result = self.executor.open_short(symbol, quantity)
-            else:  # CLOSE
+            if action == "CLOSE":
+                # 平仓
                 ColorLogger.info("🔄 正在平仓...")
                 result = self.executor.close_position(symbol)
+            else:
+                # 开仓 (BUY 或 SELL)
+                if action == "BUY":
+                    ColorLogger.info("📈 正在开多单...")
+                else:  # SELL
+                    ColorLogger.info("📉 正在开空单...")
+                
+                result = self.executor.execute_trade(
+                    symbol=symbol,
+                    action=action,
+                    amount=quantity,
+                    reason="LLM决策自动执行"
+                )
             
-            ColorLogger.success("交易执行成功!")
+            if result.get('success') or result.get('status') in ['success', 'test', 'info']:
+                ColorLogger.success("交易执行成功!")
+            else:
+                ColorLogger.warning("交易执行完成，但可能有警告")
+            
             print(f"\n{ColorLogger.GREEN}{'─' * 80}{ColorLogger.RESET}")
             print(f"{ColorLogger.BOLD}执行结果:{ColorLogger.RESET}")
             print(result)
             print(f"{ColorLogger.GREEN}{'─' * 80}{ColorLogger.RESET}\n")
+            
+            return result
+            
         except Exception as e:
             ColorLogger.error("交易执行失败!")
             print(f"\n{ColorLogger.RED}{'─' * 80}{ColorLogger.RESET}")
             print(f"{ColorLogger.BOLD}错误信息:{ColorLogger.RESET}")
             print(str(e))
             print(f"{ColorLogger.RED}{'─' * 80}{ColorLogger.RESET}\n")
+            
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                'success': False,
+                'message': str(e)
+            }
 

@@ -44,6 +44,7 @@ def get_crypto_config():
         "binance_proxy": os.getenv("BINANCE_PROXY", None),
         "binance_leverage": int(os.getenv("BINANCE_LEVERAGE", "10")),
         "binance_test_mode": os.getenv("BINANCE_TEST_MODE", "true").lower() == "true",
+        "binance_position_mode": os.getenv("BINANCE_POSITION_MODE", "auto").lower(),  # 'auto', 'oneway', 'hedge'
         
         # ==================== 交易参数 ====================
         "crypto_symbol": os.getenv("CRYPTO_SYMBOL", "BTC/USDT"),

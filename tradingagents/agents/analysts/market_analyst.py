@@ -63,8 +63,7 @@ First call get_crypto_data to retrieve price data, then call get_crypto_indicato
                     " Use the provided tools to progress towards answering the question."
                     " If you are unable to fully answer, that's OK; another assistant with different tools"
                     " will help where you left off. Execute what you can to make progress."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
+                    " You only need to analyze the results objectively; you don't need to give advice on whether to buy or sell."
                     " You have access to the following tools: {tool_names}.\n{system_message}"
                     "For your reference, the current date is {current_date}. The company we want to look at is {ticker}"
                     "请使用中文回答",
@@ -87,10 +86,15 @@ First call get_crypto_data to retrieve price data, then call get_crypto_indicato
         
         result = invoke_with_retry()
 
-        report = ""
-
+        # 保存报告逻辑：
+        # 1. 如果没有工具调用，说明这是最终报告
+        # 2. 如果有工具调用，保持原有的报告（不覆盖）
+        report = state.get("market_report", "")  # 获取之前保存的报告
+        
         if len(result.tool_calls) == 0:
+            # 这是最终报告，保存它
             report = result.content
+        # 否则，如果还有工具调用，保持原有的 report（不变）
        
         return {
             "messages": [result],

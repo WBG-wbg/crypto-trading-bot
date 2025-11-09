@@ -3,9 +3,50 @@
 """
 import os
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
+from functools import wraps
 import ccxt
 from datetime import datetime
+
+
+def api_retry(max_retries: int = 3, delay: float = 2.0, backoff: float = 2.0):
+    """
+    API 调用重试装饰器，用于处理网络错误和临时性 API 错误
+    
+    Args:
+        max_retries: 最大重试次数
+        delay: 初始延迟时间（秒）
+        backoff: 延迟时间的指数退避因子
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retry_count = 0
+            current_delay = delay
+            
+            while retry_count <= max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except (ccxt.NetworkError, ccxt.ExchangeNotAvailable, 
+                        ccxt.RequestTimeout, ConnectionError) as e:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        print(f"❌ {func.__name__} 达到最大重试次数 {max_retries}，放弃重试")
+                        raise
+                    
+                    print(f"⚠️ {func.__name__} 网络错误 (尝试 {retry_count}/{max_retries}): {str(e)[:100]}")
+                    print(f"   等待 {current_delay:.1f} 秒后重试...")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+                    
+                except Exception as e:
+                    # 对于非网络错误，直接抛出
+                    print(f"❌ {func.__name__} 发生非网络错误: {e}")
+                    raise
+            
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 class BinanceExecutor:
@@ -57,6 +98,59 @@ class BinanceExecutor:
         # 交易记录
         self.trade_history = []
         
+        # 持仓模式（单向/双向）- 延迟检测
+        self.position_mode = None  # 'hedge' (双向) 或 'oneway' (单向)
+        
+    def _detect_position_mode(self):
+        """检测当前持仓模式"""
+        if self.position_mode is not None:
+            return self.position_mode
+        
+        # 方法0: 检查用户配置（优先级最高）
+        config_mode = self.config.get('binance_position_mode', 'auto')
+        if config_mode in ['oneway', 'hedge']:
+            self.position_mode = config_mode
+            mode_name = "单向持仓模式（One-way）" if config_mode == 'oneway' else "双向持仓模式（Hedge）"
+            print(f"✓ 使用配置的持仓模式：{mode_name}")
+            return self.position_mode
+        
+        # 自动检测模式
+        try:
+            # 方法1: 尝试使用ccxt的标准方法
+            if hasattr(self.exchange, 'fetch_position_mode'):
+                mode_info = self.exchange.fetch_position_mode()
+                if mode_info.get('hedged', False):
+                    self.position_mode = 'hedge'
+                    print(f"✓ 检测到双向持仓模式（Hedge Mode）")
+                else:
+                    self.position_mode = 'oneway'
+                    print(f"✓ 检测到单向持仓模式（One-way Mode）")
+                return self.position_mode
+        except Exception as e:
+            pass  # 尝试下一个方法
+        
+        try:
+            # 方法2: 使用币安期货API直接调用（GET /fapi/v1/positionSide/dual）
+            response = self.exchange.fapi_private_get_positionside_dual()
+            dual_side = response.get('dualSidePosition', False)
+            
+            if dual_side:
+                self.position_mode = 'hedge'  # 双向持仓
+                print(f"✓ 检测到双向持仓模式（Hedge Mode）")
+            else:
+                self.position_mode = 'oneway'  # 单向持仓
+                print(f"✓ 检测到单向持仓模式（One-way Mode）")
+            
+            return self.position_mode
+            
+        except Exception as e:
+            # 方法3: 默认使用单向模式（最安全）
+            print(f"⚠️ 无法自动检测持仓模式")
+            print(f"💡 默认使用单向持仓模式（One-way Mode）")
+            print(f"💡 提示：可以在 .env 中设置 BINANCE_POSITION_MODE=oneway 或 hedge 来手动指定")
+            self.position_mode = 'oneway'
+            return self.position_mode
+    
     def setup_exchange(self, symbol: str, leverage: int = 10):
         """
         设置交易所参数
@@ -66,12 +160,18 @@ class BinanceExecutor:
             leverage: 杠杆倍数
         """
         try:
-            # 设置为双向持仓模式（Hedge Mode）
-            try:
-                self.exchange.fapiPrivatePostPositionsideDual({'dualSidePosition': 'true'})
-                print(f"✓ 已设置为双向持仓模式")
-            except Exception as e:
-                print(f"持仓模式设置提示: {e} (如果已是双向持仓模式可忽略)")
+            # 检测持仓模式
+            self._detect_position_mode()
+            
+            # 如果需要，尝试设置为双向持仓模式（可选）
+            # 注意：这会影响整个账户，可能不是所有用户都希望改变
+            # if self.position_mode == 'oneway':
+            #     try:
+            #         self.exchange.fapiPrivatePostPositionsideDual({'dualSidePosition': 'true'})
+            #         self.position_mode = 'hedge'
+            #         print(f"✓ 已设置为双向持仓模式")
+            #     except Exception as e:
+            #         print(f"⚠️ 无法设置双向持仓模式: {e}，将使用单向模式")
             
             # 设置杠杆
             self.exchange.set_leverage(leverage, symbol)
@@ -88,6 +188,7 @@ class BinanceExecutor:
             print(f"❌ 交易所设置失败: {e}")
             return False
     
+    @api_retry(max_retries=3, delay=2.0)
     def get_current_position(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         获取当前持仓情况
@@ -120,15 +221,29 @@ class BinanceExecutor:
                     
                     if position_amt != 0:  # 有持仓
                         side = 'long' if position_amt > 0 else 'short'
+                        
+                        # 安全获取价格值，处理 None 情况
+                        entry_price = pos.get('entryPrice', 0)
+                        entry_price = float(entry_price) if entry_price is not None else 0.0
+                        
+                        unrealized_pnl = pos.get('unrealizedPnl', 0)
+                        unrealized_pnl = float(unrealized_pnl) if unrealized_pnl is not None else 0.0
+                        
+                        liquidation_price = pos.get('liquidationPrice', 0)
+                        liquidation_price = float(liquidation_price) if liquidation_price is not None else 0.0
+                        
+                        leverage = pos.get('leverage', 1)
+                        leverage = float(leverage) if leverage is not None else 1.0
+                        
                         return {
                             'side': side,
                             'size': abs(position_amt),
-                            'entry_price': float(pos.get('entryPrice', 0)),
-                            'unrealized_pnl': float(pos.get('unrealizedPnl', 0)),
+                            'entry_price': entry_price,
+                            'unrealized_pnl': unrealized_pnl,
                             'position_amt': position_amt,
                             'symbol': pos['symbol'],
-                            'leverage': pos.get('leverage', 1),
-                            'liquidation_price': pos.get('liquidationPrice', 0)
+                            'leverage': leverage,
+                            'liquidation_price': liquidation_price
                         }
             
             return None
@@ -187,6 +302,9 @@ class BinanceExecutor:
             result['message'] = "测试模式：模拟交易成功"
             return result
         
+        # 检测持仓模式
+        self._detect_position_mode()
+        
         try:
             order = None
             
@@ -195,24 +313,27 @@ class BinanceExecutor:
                 if current_position and current_position['side'] == 'short':
                     # 先平空仓
                     print("📤 平空仓...")
+                    params = {'positionSide': 'SHORT'} if self.position_mode == 'hedge' else {}
                     order = self.exchange.create_market_buy_order(
                         symbol,
                         current_position['size'],
-                        {'positionSide': 'SHORT'}
+                        params
                     )
                     time.sleep(1)
                 
                 if not current_position or current_position['side'] != 'long':
                     # 开多仓
                     print("📈 开多仓...")
+                    params = {'positionSide': 'LONG'} if self.position_mode == 'hedge' else {}
                     order = self.exchange.create_market_buy_order(
                         symbol,
                         amount,
-                        {'positionSide': 'LONG'}
+                        params
                     )
                 else:
                     print("⚠️ 已有多仓，不重复开仓")
-                    result['message'] = "已有多仓，不重复开仓"
+                    print("💡 提示：如想继续持有，决策应为 HOLD；如想平仓，决策应为 CLOSE")
+                    result['message'] = "已有多仓，不重复开仓（系统保护：防止意外加仓）"
                     return result
                     
             elif action == 'SELL':
@@ -220,34 +341,38 @@ class BinanceExecutor:
                 if current_position and current_position['side'] == 'long':
                     # 先平多仓
                     print("📤 平多仓...")
+                    params = {'positionSide': 'LONG'} if self.position_mode == 'hedge' else {}
                     order = self.exchange.create_market_sell_order(
                         symbol,
                         current_position['size'],
-                        {'positionSide': 'LONG'}
+                        params
                     )
                     time.sleep(1)
                 
                 if not current_position or current_position['side'] != 'short':
                     # 开空仓
                     print("📉 开空仓...")
+                    params = {'positionSide': 'SHORT'} if self.position_mode == 'hedge' else {}
                     order = self.exchange.create_market_sell_order(
                         symbol,
                         amount,
-                        {'positionSide': 'SHORT'}
+                        params
                     )
                 else:
                     print("⚠️ 已有空仓，不重复开仓")
-                    result['message'] = "已有空仓，不重复开仓"
+                    print("💡 提示：如想继续持有，决策应为 HOLD；如想平仓，决策应为 CLOSE")
+                    result['message'] = "已有空仓，不重复开仓（系统保护：防止意外加仓）"
                     return result
                     
             elif action == 'CLOSE_LONG':
                 # 平多仓
                 if current_position and current_position['side'] == 'long':
                     print("📤 平多仓...")
+                    params = {'positionSide': 'LONG'} if self.position_mode == 'hedge' else {'reduceOnly': True}
                     order = self.exchange.create_market_sell_order(
                         symbol,
                         current_position['size'],
-                        {'positionSide': 'LONG'}
+                        params
                     )
                 else:
                     print("⚠️ 没有多仓可平")
@@ -258,10 +383,11 @@ class BinanceExecutor:
                 # 平空仓
                 if current_position and current_position['side'] == 'short':
                     print("📤 平空仓...")
+                    params = {'positionSide': 'SHORT'} if self.position_mode == 'hedge' else {'reduceOnly': True}
                     order = self.exchange.create_market_buy_order(
                         symbol,
                         current_position['size'],
-                        {'positionSide': 'SHORT'}
+                        params
                     )
                 else:
                     print("⚠️ 没有空仓可平")
@@ -387,6 +513,7 @@ class BinanceExecutor:
         except Exception as e:
             print(f"⚠️ 设置止损止盈失败: {e}")
     
+    @api_retry(max_retries=3, delay=2.0)
     def get_account_info(self) -> Dict[str, Any]:
         """获取账户信息"""
         try:
@@ -446,15 +573,27 @@ class BinanceExecutor:
                 }
                 print(f"✅ 测试模式：模拟平仓成功")
             else:
+                # 检测持仓模式
+                self._detect_position_mode()
+                
                 # 实盘模式：执行平仓
                 # 多头平仓 = 卖出，空头平仓 = 买入
                 close_side = 'sell' if side == 'long' else 'buy'
+                
+                # 根据持仓模式设置参数
+                if self.position_mode == 'hedge':
+                    # 双向持仓模式：使用 positionSide
+                    position_side = 'LONG' if side == 'long' else 'SHORT'
+                    params = {'positionSide': position_side, 'reduceOnly': True}
+                else:
+                    # 单向持仓模式：只使用 reduceOnly
+                    params = {'reduceOnly': True}
                 
                 order = self.exchange.create_market_order(
                     symbol,
                     close_side,
                     abs(size),
-                    params={'reduceOnly': True}
+                    params=params
                 )
                 
                 result = {
@@ -496,6 +635,7 @@ class BinanceExecutor:
             else:
                 self.execute_trade(symbol, 'CLOSE_SHORT', position['size'], reason="强制平仓")
     
+    @api_retry(max_retries=3, delay=2.0)
     def get_position_summary(self, symbol: str) -> str:
         """
         获取当前持仓的摘要信息（格式化为文本）
@@ -525,18 +665,18 @@ class BinanceExecutor:
                 side_upper = side.upper()
                 side_cn = "多头" if side_upper == "LONG" else "空头"
                 
-                # 使用正确的字段名
-                size = position.get('size', 0)
-                entry_price = position.get('entry_price', 0)
-                pnl = position.get('unrealized_pnl', 0)
-                liquidation = position.get('liquidation_price', 0)
+                # 使用正确的字段名，处理 None 值
+                size = position.get('size', 0) or 0
+                entry_price = position.get('entry_price', 0) or 0
+                pnl = position.get('unrealized_pnl', 0) or 0
+                liquidation = position.get('liquidation_price', 0) or 0
                 
                 # 获取当前价格（用于计算盈亏百分比）
                 try:
                     ticker = self.exchange.fetch_ticker(symbol)
-                    current_price = ticker['last']
+                    current_price = ticker['last'] or entry_price or 0
                 except:
-                    current_price = entry_price
+                    current_price = entry_price or 0
                 
                 # 计算盈亏百分比
                 if entry_price > 0:
@@ -580,5 +720,11 @@ class BinanceExecutor:
             return summary
             
         except Exception as e:
-            return f"**获取账户信息失败**: {str(e)}\n\n建议：按新开仓位处理，注意控制风险"
+            error_msg = f"**获取账户信息失败** (已重试3次): {str(e)}\n\n"
+            error_msg += "可能原因：\n"
+            error_msg += "  - 网络连接问题\n"
+            error_msg += "  - API 限流\n"
+            error_msg += "  - 交易所暂时不可用\n\n"
+            error_msg += "💡 **建议**: 系统将按新开仓位处理，注意控制风险"
+            return error_msg
 
