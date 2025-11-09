@@ -1,0 +1,84 @@
+?   	github.com/oak/crypto-trading-bot/internal/agents	[no test files]
+=== RUN   TestLoadConfig
+    config_test.go:65: LoadConfig failed: failed to read config file: open .env: no such file or directory
+--- FAIL: TestLoadConfig (0.00s)
+=== RUN   TestCalculateLookbackDays
+=== RUN   TestCalculateLookbackDays/15m
+=== RUN   TestCalculateLookbackDays/1h
+=== RUN   TestCalculateLookbackDays/4h
+=== RUN   TestCalculateLookbackDays/1d
+=== RUN   TestCalculateLookbackDays/5m
+=== RUN   TestCalculateLookbackDays/unknown
+--- PASS: TestCalculateLookbackDays (0.00s)
+    --- PASS: TestCalculateLookbackDays/15m (0.00s)
+    --- PASS: TestCalculateLookbackDays/1h (0.00s)
+    --- PASS: TestCalculateLookbackDays/4h (0.00s)
+    --- PASS: TestCalculateLookbackDays/1d (0.00s)
+    --- PASS: TestCalculateLookbackDays/5m (0.00s)
+    --- PASS: TestCalculateLookbackDays/unknown (0.00s)
+FAIL
+FAIL	github.com/oak/crypto-trading-bot/internal/config	0.002s
+=== RUN   TestCalculateSMA
+--- PASS: TestCalculateSMA (0.00s)
+=== RUN   TestCalculateEMA
+--- PASS: TestCalculateEMA (0.00s)
+=== RUN   TestCalculateRSI
+--- PASS: TestCalculateRSI (0.00s)
+=== RUN   TestCalculateMACD
+--- PASS: TestCalculateMACD (0.00s)
+=== RUN   TestCalculateBollingerBands
+--- PASS: TestCalculateBollingerBands (0.00s)
+=== RUN   TestCalculateATR
+--- PASS: TestCalculateATR (0.00s)
+=== RUN   TestTechnicalIndicatorsStructure
+--- PASS: TestTechnicalIndicatorsStructure (0.00s)
+PASS
+ok  	github.com/oak/crypto-trading-bot/internal/dataflows	0.002s
+?   	github.com/oak/crypto-trading-bot/internal/executors	[no test files]
+?   	github.com/oak/crypto-trading-bot/internal/logger	[no test files]
+=== RUN   TestNewTradingScheduler
+=== RUN   TestNewTradingScheduler/1m
+=== RUN   TestNewTradingScheduler/5m
+=== RUN   TestNewTradingScheduler/15m
+=== RUN   TestNewTradingScheduler/1h
+=== RUN   TestNewTradingScheduler/4h
+=== RUN   TestNewTradingScheduler/1d
+=== RUN   TestNewTradingScheduler/invalid
+--- PASS: TestNewTradingScheduler (0.00s)
+    --- PASS: TestNewTradingScheduler/1m (0.00s)
+    --- PASS: TestNewTradingScheduler/5m (0.00s)
+    --- PASS: TestNewTradingScheduler/15m (0.00s)
+    --- PASS: TestNewTradingScheduler/1h (0.00s)
+    --- PASS: TestNewTradingScheduler/4h (0.00s)
+    --- PASS: TestNewTradingScheduler/1d (0.00s)
+    --- PASS: TestNewTradingScheduler/invalid (0.00s)
+=== RUN   TestGetNextTimeframeTime
+--- PASS: TestGetNextTimeframeTime (0.00s)
+=== RUN   TestGetNextTimeframeTime15m
+--- PASS: TestGetNextTimeframeTime15m (0.00s)
+=== RUN   TestIsOnTimeframe
+--- PASS: TestIsOnTimeframe (0.00s)
+=== RUN   TestTimeframeAlignment
+=== RUN   TestTimeframeAlignment/15m
+=== RUN   TestTimeframeAlignment/1h
+=== RUN   TestTimeframeAlignment/4h
+--- PASS: TestTimeframeAlignment (0.00s)
+    --- PASS: TestTimeframeAlignment/15m (0.00s)
+    --- PASS: TestTimeframeAlignment/1h (0.00s)
+    --- PASS: TestTimeframeAlignment/4h (0.00s)
+PASS
+ok  	github.com/oak/crypto-trading-bot/internal/scheduler	(cached)
+=== RUN   TestNewStorage
+--- PASS: TestNewStorage (0.01s)
+=== RUN   TestSaveAndGetSession
+--- PASS: TestSaveAndGetSession (0.01s)
+=== RUN   TestGetSessionsBySymbol
+--- PASS: TestGetSessionsBySymbol (0.01s)
+=== RUN   TestGetSessionStats
+--- PASS: TestGetSessionStats (0.02s)
+=== RUN   TestUpdateExecutionResult
+--- PASS: TestUpdateExecutionResult (0.01s)
+PASS
+ok  	github.com/oak/crypto-trading-bot/internal/storage	(cached)
+?   	github.com/oak/crypto-trading-bot/internal/web	[no test files]
+FAIL

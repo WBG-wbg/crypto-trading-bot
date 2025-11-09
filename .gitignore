@@ -11,5 +11,31 @@ eval_data/
 *.egg-info/
 .env
 uv.lock
-/.claude
+.claude/
 CLAUDE.md
+.idea/
+
+# Go specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+/dist/
+/bin/
+crypto-trading-bot
+
+# Database files
+/data/*.db
+/data/*.db-journal
+/data/*.db-wal
+/data/*.db-shm
+
+# Test files
+coverage.out
+coverage.html
+test_*.db
+*.test
