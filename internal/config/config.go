@@ -56,19 +56,9 @@ type Config struct {
 	// PositionSize removed - now uses LLM's position size recommendation
 	// 移除 PositionSize - 现在使用 LLM 的仓位建议
 
-	// Stop-loss management configuration
-	// 止损管理配置
-	StopLossStrategy         string  // fixed, breakeven, trailing / 止损策略
-	EnableBreakeven          bool    // 是否启用保本 / Enable breakeven
-	BreakevenTrigger         float64 // 保本触发点（盈亏比）/ Breakeven trigger ratio
-	EnableTrailing           bool    // 是否启用追踪止损 / Enable trailing stop
-	TrailingTrigger          float64 // 追踪止损触发点（盈亏比）/ Trailing trigger ratio
-	TrailingDistanceInitial  float64 // 初始追踪距离 / Initial trailing distance
-	TrailingDistanceTight    float64 // 收紧后的距离 / Tightened distance
-	TrailingTightenProfit    float64 // 收紧触发利润 / Profit to tighten
-	EnablePartialTakeProfit  bool    // 是否启用分批止盈 / Enable partial TP
-	PartialTakeProfitRatio   float64 // 分批止盈比例 / Partial TP ratio
-	PartialTakeProfitTrigger float64 // 分批止盈触发点 / Partial TP trigger
+	// Stop-loss management configuration (LLM-driven fixed stop-loss only)
+	// 止损管理配置（仅 LLM 驱动的固定止损）
+	EnableStopLoss bool // 是否启用止损管理 / Enable stop-loss management
 
 	// Memory system
 	UseMemory  bool
@@ -147,18 +137,8 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		CryptoLookbackDays: viper.GetInt("CRYPTO_LOOKBACK_DAYS"),
 		// PositionSize removed - now uses LLM's position size recommendation
 
-		// Stop-loss management
-		StopLossStrategy:         viper.GetString("STOPLOSS_STRATEGY"),
-		EnableBreakeven:          viper.GetBool("STOPLOSS_ENABLE_BREAKEVEN"),
-		BreakevenTrigger:         viper.GetFloat64("STOPLOSS_BREAKEVEN_TRIGGER"),
-		EnableTrailing:           viper.GetBool("STOPLOSS_ENABLE_TRAILING"),
-		TrailingTrigger:          viper.GetFloat64("STOPLOSS_TRAILING_TRIGGER"),
-		TrailingDistanceInitial:  viper.GetFloat64("STOPLOSS_TRAILING_DISTANCE_INITIAL"),
-		TrailingDistanceTight:    viper.GetFloat64("STOPLOSS_TRAILING_DISTANCE_TIGHT"),
-		TrailingTightenProfit:    viper.GetFloat64("STOPLOSS_TRAILING_TIGHTEN_PROFIT"),
-		EnablePartialTakeProfit:  viper.GetBool("STOPLOSS_ENABLE_PARTIAL_TP"),
-		PartialTakeProfitRatio:   viper.GetFloat64("STOPLOSS_PARTIAL_TP_RATIO"),
-		PartialTakeProfitTrigger: viper.GetFloat64("STOPLOSS_PARTIAL_TP_TRIGGER"),
+		// Stop-loss management (LLM-driven)
+		EnableStopLoss: viper.GetBool("ENABLE_STOPLOSS"),
 
 		// Memory system
 		UseMemory:  viper.GetBool("USE_MEMORY"),
@@ -262,19 +242,9 @@ func setDefaults() {
 	// POSITION_SIZE removed - now uses LLM's position size recommendation
 	// 移除 POSITION_SIZE - 现在使用 LLM 的仓位建议
 
-	// Stop-loss management defaults (based on trading philosophy)
-	// 止损管理默认值（基于交易哲学）
-	viper.SetDefault("STOPLOSS_STRATEGY", "trailing")            // trailing (推荐), breakeven, fixed
-	viper.SetDefault("STOPLOSS_ENABLE_BREAKEVEN", true)          // 启用保本 / Enable breakeven
-	viper.SetDefault("STOPLOSS_BREAKEVEN_TRIGGER", 0.025)        // 2.5% 利润时保本 / Breakeven at 2.5% profit (1:1 risk/reward)
-	viper.SetDefault("STOPLOSS_ENABLE_TRAILING", true)           // 启用追踪止损 / Enable trailing
-	viper.SetDefault("STOPLOSS_TRAILING_TRIGGER", 0.05)          // 5% 利润启动追踪 / Start trailing at 5% profit (2:1 risk/reward)
-	viper.SetDefault("STOPLOSS_TRAILING_DISTANCE_INITIAL", 0.03) // 初始追踪距离 3% / Initial trailing distance
-	viper.SetDefault("STOPLOSS_TRAILING_DISTANCE_TIGHT", 0.02)   // 收紧到 2% / Tighten to 2%
-	viper.SetDefault("STOPLOSS_TRAILING_TIGHTEN_PROFIT", 0.10)   // 10% 利润时收紧 / Tighten at 10% profit
-	viper.SetDefault("STOPLOSS_ENABLE_PARTIAL_TP", false)        // 不推荐分批止盈 / Partial TP not recommended
-	viper.SetDefault("STOPLOSS_PARTIAL_TP_RATIO", 0.3)           // 平 30% 仓位 / Close 30% of position
-	viper.SetDefault("STOPLOSS_PARTIAL_TP_TRIGGER", 0.075)       // 7.5% 利润触发 / Trigger at 7.5% profit (3:1 risk/reward)
+	// Stop-loss management defaults (LLM-driven fixed stop-loss)
+	// 止损管理默认值（LLM 驱动的固定止损）
+	viper.SetDefault("ENABLE_STOPLOSS", true) // 启用止损管理 / Enable stop-loss management
 
 	viper.SetDefault("USE_MEMORY", true)
 	viper.SetDefault("MEMORY_TOP_K", 3)

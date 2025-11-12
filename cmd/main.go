@@ -245,11 +245,25 @@ func main() {
 			log.Info(fmt.Sprintf("置信度: %.2f", symbolDecision.Confidence))
 			log.Info(fmt.Sprintf("理由: %s", symbolDecision.Reason))
 
-			// Skip HOLD actions
-			// 跳过 HOLD 动作
+			// Handle HOLD actions
+			// 处理 HOLD 动作
 			if symbolDecision.Action == executors.ActionHold {
 				log.Info("💤 观望决策，不执行交易")
-				executionResults[symbol] = "观望，不执行交易"
+
+				// Update stop-loss if LLM provides new stop-loss price
+				// 如果 LLM 提供了新的止损价格，则更新止损
+				if symbolDecision.StopLoss > 0 {
+					err := stopLossManager.UpdateStopLoss(ctx, symbol, symbolDecision.StopLoss, symbolDecision.Reason)
+					if err != nil {
+						log.Warning(fmt.Sprintf("⚠️  更新 %s 止损失败: %v", symbol, err))
+						executionResults[symbol] = fmt.Sprintf("观望，更新止损失败: %v", err)
+					} else {
+						log.Success(fmt.Sprintf("✅ %s 止损已更新至: %.2f", symbol, symbolDecision.StopLoss))
+						executionResults[symbol] = fmt.Sprintf("观望，止损已更新至: %.2f", symbolDecision.StopLoss)
+					}
+				} else {
+					executionResults[symbol] = "观望，不执行交易"
+				}
 				continue
 			}
 
