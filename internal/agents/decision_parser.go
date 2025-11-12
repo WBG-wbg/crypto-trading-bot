@@ -337,10 +337,6 @@ func ValidateDecision(decision *TradingDecision, currentPosition *executors.Posi
 func ParseMultiCurrencyDecision(decisionText string, symbols []string) map[string]*TradingDecision {
 	decisions := make(map[string]*TradingDecision)
 
-	// Convert to lowercase for matching
-	// 转换为小写用于匹配
-	text := strings.ToLower(decisionText)
-
 	// Try to find decision blocks for each symbol
 	// 尝试为每个交易对找到决策块
 	for _, symbol := range symbols {
@@ -351,16 +347,22 @@ func ParseMultiCurrencyDecision(decisionText string, symbols []string) map[strin
 
 		// Find the decision block for this symbol
 		// 查找该交易对的决策块
+		// Use case-insensitive regex for matching symbol headers
+		// (?s) makes . match newlines, (?i) makes matching case-insensitive
+		// 使用不区分大小写的正则表达式匹配交易对标题
+		// (?s) 让 . 匹配换行符，(?i) 让匹配不区分大小写
 		patterns := []string{
-			fmt.Sprintf(`【%s】(.{0,500}?)(?:【|$)`, symbolLower),
-			fmt.Sprintf(`【%s】(.{0,500}?)(?:【|$)`, baseSymbol),
-			fmt.Sprintf(`%s(.{0,500}?)(?:\n\n|$)`, symbolLower),
+			fmt.Sprintf(`(?si)【%s】(.{0,1000}?)(?:【|$)`, symbolLower),
+			fmt.Sprintf(`(?si)【%s】(.{0,1000}?)(?:【|$)`, baseSymbol),
+			fmt.Sprintf(`(?si)%s(.{0,1000}?)(?:\n\n|$)`, symbolLower),
 		}
 
 		var blockText string
 		for _, pattern := range patterns {
 			re := regexp.MustCompile(pattern)
-			matches := re.FindStringSubmatch(text)
+			// Search in original text to preserve case for action extraction
+			// 在原始文本中搜索以保留大小写用于提取动作
+			matches := re.FindStringSubmatch(decisionText)
 			if len(matches) > 1 {
 				blockText = matches[1]
 				break

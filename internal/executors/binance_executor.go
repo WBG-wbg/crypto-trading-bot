@@ -144,7 +144,8 @@ func NewBinanceExecutor(cfg *config.Config, log *logger.ColorLogger) *BinanceExe
 				Timeout: 30 * time.Second,
 			}
 			client.HTTPClient = httpClient
-			log.Success(fmt.Sprintf("已配置代理: %s (跳过TLS验证: %v)", cfg.BinanceProxy, cfg.BinanceProxyInsecureSkipTLS))
+			// Proxy configured successfully (log removed to reduce verbosity)
+			// 代理配置成功（移除日志以减少冗余）
 		}
 	}
 
@@ -156,13 +157,9 @@ func NewBinanceExecutor(cfg *config.Config, log *logger.ColorLogger) *BinanceExe
 		tradeHistory: make([]TradeResult, 0),
 	}
 
-	// Print mode
-	// 打印模式
-	if executor.testMode {
-		log.Success("交易执行器：测试模式（模拟交易）")
-	} else {
-		log.Warning("交易执行器：实盘模式（真实交易！）")
-	}
+	// Mode logging removed from constructor to avoid repetitive logs
+	// 从构造函数中移除模式日志以避免重复
+	// The mode is logged once during startup in main.go
 
 	return executor
 }

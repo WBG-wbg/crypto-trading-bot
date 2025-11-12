@@ -55,8 +55,8 @@ func (pm *PortfolioManager) UpdateBalance(ctx context.Context) error {
 		if asset.Asset == "USDT" {
 			pm.totalBalance, _ = parseFloat(asset.WalletBalance)
 			pm.availableBalance, _ = parseFloat(asset.AvailableBalance)
-			pm.logger.Info(fmt.Sprintf("账户余额 - 总额: %.2f USDT, 可用: %.2f USDT",
-				pm.totalBalance, pm.availableBalance))
+			// Balance log removed to reduce verbosity (logged when saving balance snapshot)
+			// 移除余额日志以减少冗余（在保存余额快照时会打印）
 			break
 		}
 	}
