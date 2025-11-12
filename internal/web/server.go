@@ -16,6 +16,8 @@ import (
 	"github.com/oak/crypto-trading-bot/internal/config"
 	"github.com/oak/crypto-trading-bot/internal/executors"
 	"github.com/oak/crypto-trading-bot/internal/logger"
+	"github.com/oak/crypto-trading-bot/internal/portfolio"
+	"github.com/oak/crypto-trading-bot/internal/scheduler"
 	"github.com/oak/crypto-trading-bot/internal/storage"
 )
 
@@ -26,6 +28,7 @@ type Server struct {
 	logger          *logger.ColorLogger
 	storage         *storage.Storage
 	stopLossManager *executors.StopLossManager
+	scheduler       *scheduler.TradingScheduler
 	hertz           *server.Hertz
 }
 
@@ -34,11 +37,16 @@ type Server struct {
 func NewServer(cfg *config.Config, log *logger.ColorLogger, db *storage.Storage, stopLossMgr *executors.StopLossManager) *Server {
 	h := server.Default(server.WithHostPorts(fmt.Sprintf(":%d", cfg.WebPort)))
 
+	// Initialize scheduler
+	// 初始化调度器
+	sched, _ := scheduler.NewTradingScheduler(cfg.CryptoTimeframe)
+
 	s := &Server{
 		config:          cfg,
 		logger:          log,
 		storage:         db,
 		stopLossManager: stopLossMgr,
+		scheduler:       sched,
 		hertz:           h,
 	}
 
@@ -58,11 +66,13 @@ func (s *Server) setupRoutes() {
 	s.hertz.GET("/stats", s.handleStats)
 	s.hertz.GET("/health", s.handleHealth)
 
-	// New API endpoints
-	// 新增 API 端点
+	// API endpoints
+	// API 端点
 	s.hertz.GET("/api/positions", s.handlePositions)
 	s.hertz.GET("/api/positions/:symbol", s.handlePositionsBySymbol)
 	s.hertz.GET("/api/symbols", s.handleSymbols)
+	s.hertz.GET("/api/balance/history", s.handleBalanceHistory)
+	s.hertz.GET("/api/balance/current", s.handleCurrentBalance)
 }
 
 // handleIndex renders the main dashboard
@@ -113,6 +123,7 @@ func (s *Server) handleIndex(ctx context.Context, c *app.RequestContext) {
 		"Sessions":        sessions,
 		"Positions":       positions,
 		"CurrentTime":     time.Now().Format("2006-01-02 15:04:05"),
+		"NextTradeTime":   s.scheduler.GetNextTimeframeTime().Format("2006-01-02 15:04:05"),
 		"LLMEnabled":      s.config.APIKey != "" && s.config.APIKey != "your_openai_key",
 		"TestMode":        s.config.BinanceTestMode,
 		"AutoExecute":     s.config.AutoExecute,
@@ -285,4 +296,107 @@ func extractActionFromDecision(decision string) string {
 	}
 
 	return "HOLD"
+}
+
+// handleBalanceHistory returns balance history data as JSON
+// handleBalanceHistory 以 JSON 格式返回余额历史数据
+func (s *Server) handleBalanceHistory(ctx context.Context, c *app.RequestContext) {
+	hours := 24 // Default to last 24 hours / 默认最近 24 小时
+	if h := c.Query("hours"); h != "" {
+		fmt.Sscanf(h, "%d", &hours)
+	}
+
+	history, err := s.storage.GetBalanceHistory(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
+	// Format for Chart.js
+	// 格式化为 Chart.js 可用的格式
+	var timestamps []string
+	var totalBalances []float64
+	var availableBalances []float64
+	var unrealizedPnLs []float64
+
+	// Determine time format based on data span
+	// 根据数据跨度决定时间格式
+	var timeFormat string
+	if len(history) > 0 {
+		firstTime := history[0].Timestamp
+		lastTime := history[len(history)-1].Timestamp
+		duration := lastTime.Sub(firstTime)
+
+		if duration.Hours() > 24 {
+			// More than 24 hours: show date + time
+			// 超过24小时：显示日期+时间
+			timeFormat = "01-02 15:04"
+		} else if duration.Hours() > 1 {
+			// 1-24 hours: show time with date if different days
+			// 1-24小时：显示时间，跨天则加日期
+			if firstTime.Day() != lastTime.Day() {
+				timeFormat = "01-02 15:04"
+			} else {
+				timeFormat = "15:04"
+			}
+		} else {
+			// Less than 1 hour: show hour:minute:second
+			// 少于1小时：显示时:分:秒
+			timeFormat = "15:04:05"
+		}
+	} else {
+		timeFormat = "15:04"
+	}
+
+	for _, h := range history {
+		timestamps = append(timestamps, h.Timestamp.Format(timeFormat))
+		totalBalances = append(totalBalances, h.TotalBalance)
+		availableBalances = append(availableBalances, h.AvailableBalance)
+		unrealizedPnLs = append(unrealizedPnLs, h.UnrealizedPnL)
+	}
+
+	response := map[string]interface{}{
+		"timestamps":        timestamps,
+		"total_balance":     totalBalances,
+		"available_balance": availableBalances,
+		"unrealized_pnl":    unrealizedPnLs,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// handleCurrentBalance returns current real-time balance from Binance
+// handleCurrentBalance 返回从币安实时获取的当前余额
+func (s *Server) handleCurrentBalance(ctx context.Context, c *app.RequestContext) {
+	// Create executor and portfolio manager for real-time balance query
+	// 创建执行器和投资组合管理器用于实时余额查询
+	executor := executors.NewBinanceExecutor(s.config, s.logger)
+	portfolioMgr := portfolio.NewPortfolioManager(s.config, executor, s.logger)
+
+	// Update balance from Binance
+	// 从币安更新余额
+	if err := portfolioMgr.UpdateBalance(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": fmt.Sprintf("获取余额失败: %v", err)})
+		return
+	}
+
+	// Update positions for all symbols
+	// 更新所有交易对的持仓信息
+	for _, symbol := range s.config.CryptoSymbols {
+		if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+			s.logger.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+		}
+	}
+
+	// Return current balance data
+	// 返回当前余额数据
+	response := map[string]interface{}{
+		"timestamp":         time.Now().Format("2006-01-02 15:04:05"),
+		"total_balance":     portfolioMgr.GetTotalBalance(),
+		"available_balance": portfolioMgr.GetAvailableBalance(),
+		"unrealized_pnl":    portfolioMgr.GetTotalUnrealizedPnL(),
+		"positions":         portfolioMgr.GetPositionCount(),
+	}
+
+	c.JSON(http.StatusOK, response)
 }

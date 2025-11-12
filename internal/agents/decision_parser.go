@@ -77,7 +77,7 @@ func extractAction(text string) string {
 	// First try to extract from decision markers (highest priority)
 	// 首先尝试从决策标记中提取（最高优先级）
 	decisionPatterns := []string{
-		`(?:最终决策|决策方向)[：:*\s]*\*?\*?([A-Z_]+)`,
+		`(?:最终决策|决策方向|交易方向)[：:*\s]*\*?\*?([A-Z_]+)`,
 		`(?:decision|action)[：:*\s]*\*?\*?([A-Z_]+)`,
 	}
 

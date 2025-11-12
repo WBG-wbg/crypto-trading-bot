@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加密货币交易机器人 - 监控面板 (完整版)</title>
+    <title>加密货币交易机器人 - 监控面板</title>
     <style>
         * {
             margin: 0;
@@ -351,12 +351,203 @@
             color: #ef4444;
             font-weight: 700;
         }
+
+        .chart-container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+            margin-bottom: 25px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 400px;
+        }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
-        // Auto refresh every 30 seconds
+        // Global chart instance
+        let balanceChart = null;
+
+        // Auto refresh page every 5 minutes (chart updates every 30s via API)
+        // 每5分钟刷新页面（图表通过 API 每30秒更新）
         setTimeout(function() {
             location.reload();
-        }, 30000);
+        }, 300000); // 5 minutes
+
+        // Countdown timer
+        function updateCountdown() {
+            const nextTradeTime = new Date("{{.NextTradeTime}}").getTime();
+            const now = new Date().getTime();
+            const distance = nextTradeTime - now;
+
+            if (distance < 0) {
+                document.getElementById("countdown").innerHTML = "正在分析中...";
+                return;
+            }
+
+            const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+            document.getElementById("countdown").innerHTML =
+                hours.toString().padStart(2, '0') + ":" +
+                minutes.toString().padStart(2, '0') + ":" +
+                seconds.toString().padStart(2, '0');
+        }
+
+        // Update countdown every second
+        setInterval(updateCountdown, 1000);
+
+        // Load balance chart on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            updateCountdown();
+            loadBalanceChart();
+        });
+
+        function loadBalanceChart() {
+            fetch('/api/balance/history?hours=24')
+                .then(response => response.json())
+                .then(data => {
+                    // Check if data is empty
+                    if (!data.timestamps || data.timestamps.length === 0) {
+                        document.getElementById('balanceChart').parentElement.innerHTML =
+                            '<div style="text-align: center; padding: 40px; color: #6b7280;">' +
+                            '<p>📊 暂无余额历史数据</p>' +
+                            '<p style="margin-top: 10px; font-size: 0.9em;">系统启动时会保存初始快照，之后每5分钟自动记录一次余额。</p>' +
+                            '<p style="margin-top: 5px; font-size: 0.9em;">页面将每30秒自动获取最新余额并更新图表...</p>' +
+                            '</div>';
+                        // Still start real-time updates even if no history
+                        // 即使没有历史数据也启动实时更新
+                        startRealtimeUpdates();
+                        return;
+                    }
+
+                    const ctx = document.getElementById('balanceChart').getContext('2d');
+                    balanceChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: data.timestamps,
+                            datasets: [
+                                {
+                                    label: '总余额 (USDT)',
+                                    data: data.total_balance,
+                                    borderColor: '#667eea',
+                                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                                    tension: 0.4,
+                                    fill: true
+                                },
+                                {
+                                    label: '可用余额 (USDT)',
+                                    data: data.available_balance,
+                                    borderColor: '#10b981',
+                                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                    tension: 0.4,
+                                    fill: true
+                                },
+                                {
+                                    label: '未实现盈亏 (USDT)',
+                                    data: data.unrealized_pnl,
+                                    borderColor: '#f59e0b',
+                                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                                    tension: 0.4,
+                                    fill: true
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    position: 'top',
+                                },
+                                title: {
+                                    display: true,
+                                    text: '账户余额历史 (实时更新)',
+                                    font: {
+                                        size: 16,
+                                        weight: 'bold'
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: false,
+                                    grace: '5%',  // 在数据范围上下各增加 5% 的空间
+                                    ticks: {
+                                        callback: function(value) {
+                                            return value.toFixed(2) + ' USDT';
+                                        }
+                                    }
+                                }
+                            },
+                            animation: {
+                                duration: 750
+                            }
+                        }
+                    });
+
+                    // Start real-time updates
+                    // 启动实时更新
+                    startRealtimeUpdates();
+                })
+                .catch(error => {
+                    console.error('加载余额历史失败:', error);
+                    document.getElementById('balanceChart').parentElement.innerHTML =
+                        '<div style="text-align: center; padding: 40px; color: #ef4444;">' +
+                        '<p>⚠️ 加载余额历史数据失败</p>' +
+                        '<p style="margin-top: 10px; font-size: 0.9em;">错误: ' + error.message + '</p>' +
+                        '</div>';
+                });
+        }
+
+        function startRealtimeUpdates() {
+            // Update immediately
+            // 立即更新一次
+            updateRealtimeBalance();
+
+            // Then update every 30 seconds
+            // 之后每30秒更新一次
+            setInterval(updateRealtimeBalance, 30000);
+        }
+
+        function updateRealtimeBalance() {
+            fetch('/api/balance/current')
+                .then(response => response.json())
+                .then(data => {
+                    if (!balanceChart) {
+                        console.log('Chart not initialized yet');
+                        return;
+                    }
+
+                    // Add new data point to chart
+                    // 添加新数据点到图表
+                    const timeLabel = data.timestamp.split(' ')[1]; // Extract time part
+                    balanceChart.data.labels.push(timeLabel);
+                    balanceChart.data.datasets[0].data.push(data.total_balance);
+                    balanceChart.data.datasets[1].data.push(data.available_balance);
+                    balanceChart.data.datasets[2].data.push(data.unrealized_pnl);
+
+                    // Keep only last 100 data points to avoid overcrowding
+                    // 只保留最近100个数据点，避免图表过于拥挤
+                    const maxDataPoints = 100;
+                    if (balanceChart.data.labels.length > maxDataPoints) {
+                        balanceChart.data.labels.shift();
+                        balanceChart.data.datasets.forEach(dataset => dataset.data.shift());
+                    }
+
+                    // Update chart
+                    // 更新图表
+                    balanceChart.update();
+
+                    console.log('Balance updated:', data.timestamp, 'Total:', data.total_balance, 'USDT');
+                })
+                .catch(error => {
+                    console.error('更新实时余额失败:', error);
+                });
+        }
     </script>
 </head>
 <body>
@@ -414,6 +605,11 @@
                     <strong>更新时间:</strong>
                     <span>{{.CurrentTime}}</span>
                 </div>
+                <div class="status-item">
+                    <strong>下次交易:</strong>
+                    <span>{{.NextTradeTime}}</span>
+                    <span class="badge badge-success" id="countdown" style="margin-left: 5px;">--:--:--</span>
+                </div>
             </div>
         </header>
 
@@ -433,6 +629,13 @@
             <div class="stat-card">
                 <div class="stat-label">活跃持仓</div>
                 <div class="stat-value">{{len .Positions}}</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>📈 账户余额历史</h2>
+            <div class="chart-wrapper">
+                <canvas id="balanceChart"></canvas>
             </div>
         </div>
 
@@ -479,7 +682,7 @@
                     </div>
                     <div class="position-detail">
                         <div class="position-detail-label">未实现盈亏</div>
-                        <div class="position-detail-value {{if gt .UnrealizedPnL 0}}profit-positive{{else}}profit-negative{{end}}">
+                        <div class="position-detail-value {{if ge .UnrealizedPnL 0.0}}profit-positive{{else}}profit-negative{{end}}">
                             {{printf "%+.2f%%" (mul .UnrealizedPnL 100)}}
                         </div>
                     </div>
@@ -541,10 +744,10 @@
         </div>
 
         <div class="refresh-info">
-            ⏱ 页面将在 30 秒后自动刷新 |
+            📊 余额图表每 30 秒自动更新 | ⏱ 页面每 5 分钟刷新 |
             <a href="/api/positions" style="color: #667eea; text-decoration: none;">API: 持仓</a> |
             <a href="/api/symbols" style="color: #667eea; text-decoration: none;">API: 交易对</a> |
-            <a href="/api/stats" style="color: #667eea; text-decoration: none;">API: 统计</a>
+            <a href="/api/balance/current" style="color: #667eea; text-decoration: none;">API: 实时余额</a>
         </div>
     </div>
 </body>

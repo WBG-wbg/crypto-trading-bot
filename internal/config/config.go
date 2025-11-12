@@ -50,8 +50,7 @@ type Config struct {
 
 	// Trading parameters
 	// 交易参数
-	CryptoSymbol       string   // 主交易对（向后兼容）/ Primary trading pair (backward compatible)
-	CryptoSymbols      []string // 多个交易对列表 / Multiple trading pairs list
+	CryptoSymbols      []string // 交易对列表（支持单个或多个，用逗号分隔）/ Trading pairs list (supports single or multiple, comma-separated)
 	CryptoTimeframe    string
 	CryptoLookbackDays int
 	PositionSize       float64
@@ -144,7 +143,6 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		BinancePositionMode:         viper.GetString("BINANCE_POSITION_MODE"),
 
 		// Trading parameters
-		CryptoSymbol:       viper.GetString("CRYPTO_SYMBOL"),
 		CryptoTimeframe:    viper.GetString("CRYPTO_TIMEFRAME"),
 		CryptoLookbackDays: viper.GetInt("CRYPTO_LOOKBACK_DAYS"),
 		PositionSize:       viper.GetFloat64("POSITION_SIZE"),
@@ -182,25 +180,19 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		cfg.CryptoLookbackDays = calculateLookbackDays(cfg.CryptoTimeframe)
 	}
 
-	// Parse multiple crypto symbols
-	// 解析多个加密货币交易对
+	// Parse crypto symbols (supports single or multiple, comma-separated)
+	// 解析加密货币交易对（支持单个或多个，用逗号分隔）
 	symbolsStr := viper.GetString("CRYPTO_SYMBOLS")
 	if symbolsStr != "" {
-		// Use CRYPTO_SYMBOLS if provided
-		// 如果提供了 CRYPTO_SYMBOLS，使用它
 		cfg.CryptoSymbols = strings.Split(symbolsStr, ",")
-		// Trim spaces
-		// 去除空格
+		// Trim spaces from each symbol
+		// 去除每个交易对的空格
 		for i := range cfg.CryptoSymbols {
 			cfg.CryptoSymbols[i] = strings.TrimSpace(cfg.CryptoSymbols[i])
 		}
-	} else if cfg.CryptoSymbol != "" {
-		// Fall back to single symbol for backward compatibility
-		// 向后兼容：回退到单个交易对
-		cfg.CryptoSymbols = []string{cfg.CryptoSymbol}
 	} else {
-		// Default to BTC/USDT
-		// 默认使用 BTC/USDT
+		// Default to BTC/USDT if not specified
+		// 如果未指定，默认使用 BTC/USDT
 		cfg.CryptoSymbols = []string{"BTC/USDT"}
 	}
 
@@ -317,12 +309,6 @@ func calculateLookbackDays(timeframe string) int {
 	default:
 		return 10
 	}
-}
-
-// GetBinanceSymbol converts symbol format from "BTC/USDT" to "BTCUSDT"
-// GetBinanceSymbol 将交易对格式从 "BTC/USDT" 转换为 "BTCUSDT"
-func (c *Config) GetBinanceSymbol() string {
-	return strings.ReplaceAll(c.CryptoSymbol, "/", "")
 }
 
 // GetBinanceSymbolFor converts a specific symbol format from "BTC/USDT" to "BTCUSDT"

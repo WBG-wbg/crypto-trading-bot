@@ -62,6 +62,17 @@ type StopLossEvent struct {
 	Trigger    string
 }
 
+// BalanceHistory represents account balance at a point in time
+// BalanceHistory 表示某个时间点的账户余额
+type BalanceHistory struct {
+	ID               int64
+	Timestamp        time.Time
+	TotalBalance     float64
+	AvailableBalance float64
+	UnrealizedPnL    float64
+	Positions        int
+}
+
 // Storage handles SQLite database operations
 type Storage struct {
 	db *sql.DB
@@ -150,6 +161,17 @@ func (s *Storage) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_stoploss_position ON stoploss_events(position_id, timestamp DESC);
+
+	CREATE TABLE IF NOT EXISTS balance_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL,
+		total_balance REAL NOT NULL,
+		available_balance REAL NOT NULL,
+		unrealized_pnl REAL DEFAULT 0,
+		positions INTEGER DEFAULT 0
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_balance_timestamp ON balance_history(timestamp DESC);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -357,6 +379,67 @@ func (s *Storage) UpdateLatestSessionExecution(symbol string, timeframe string, 
 	return nil
 }
 
+// SaveBalanceHistory saves account balance snapshot to history
+// SaveBalanceHistory 保存账户余额快照到历史记录
+func (s *Storage) SaveBalanceHistory(balance *BalanceHistory) error {
+	query := `
+	INSERT INTO balance_history (
+		timestamp, total_balance, available_balance, unrealized_pnl, positions
+	) VALUES (?, ?, ?, ?, ?)
+	`
+
+	_, err := s.db.Exec(
+		query,
+		balance.Timestamp,
+		balance.TotalBalance,
+		balance.AvailableBalance,
+		balance.UnrealizedPnL,
+		balance.Positions,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save balance history: %w", err)
+	}
+
+	return nil
+}
+
+// GetBalanceHistory retrieves balance history for the last N hours
+// GetBalanceHistory 获取最近 N 小时的余额历史
+func (s *Storage) GetBalanceHistory(hours int) ([]*BalanceHistory, error) {
+	query := `
+	SELECT id, timestamp, total_balance, available_balance, unrealized_pnl, positions
+	FROM balance_history
+	WHERE timestamp >= datetime('now', '-' || ? || ' hours')
+	ORDER BY timestamp ASC
+	`
+
+	rows, err := s.db.Query(query, hours)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query balance history: %w", err)
+	}
+	defer rows.Close()
+
+	var history []*BalanceHistory
+	for rows.Next() {
+		h := &BalanceHistory{}
+		err := rows.Scan(
+			&h.ID,
+			&h.Timestamp,
+			&h.TotalBalance,
+			&h.AvailableBalance,
+			&h.UnrealizedPnL,
+			&h.Positions,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan balance history: %w", err)
+		}
+		history = append(history, h)
+	}
+
+	return history, rows.Err()
+}
+
 // Close closes the database connection
 func (s *Storage) Close() error {
 	if s.db != nil {
@@ -449,16 +532,45 @@ func (s *Storage) GetActivePositions() ([]*PositionRecord, error) {
 	var positions []*PositionRecord
 	for rows.Next() {
 		pos := &PositionRecord{}
+		var trailingDistance, unrealizedPnL, atr, closePrice, realizedPnL sql.NullFloat64
+		var closeTime sql.NullTime
+		var closeReason sql.NullString
+
 		err := rows.Scan(
 			&pos.ID, &pos.Symbol, &pos.Side, &pos.EntryPrice, &pos.EntryTime, &pos.Quantity, &pos.Leverage,
 			&pos.InitialStopLoss, &pos.CurrentStopLoss, &pos.StopLossType,
-			&pos.TrailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
-			&pos.UnrealizedPnL, &pos.OpenReason, &pos.ATR, &pos.Closed,
-			&pos.CloseTime, &pos.ClosePrice, &pos.CloseReason, &pos.RealizedPnL,
+			&trailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
+			&unrealizedPnL, &pos.OpenReason, &atr, &pos.Closed,
+			&closeTime, &closePrice, &closeReason, &realizedPnL,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
+
+		// Handle NULL values
+		// 处理 NULL 值
+		if trailingDistance.Valid {
+			pos.TrailingDistance = trailingDistance.Float64
+		}
+		if unrealizedPnL.Valid {
+			pos.UnrealizedPnL = unrealizedPnL.Float64
+		}
+		if atr.Valid {
+			pos.ATR = atr.Float64
+		}
+		if closeTime.Valid {
+			pos.CloseTime = &closeTime.Time
+		}
+		if closePrice.Valid {
+			pos.ClosePrice = closePrice.Float64
+		}
+		if closeReason.Valid {
+			pos.CloseReason = closeReason.String
+		}
+		if realizedPnL.Valid {
+			pos.RealizedPnL = realizedPnL.Float64
+		}
+
 		positions = append(positions, pos)
 	}
 
@@ -489,16 +601,45 @@ func (s *Storage) GetPositionsBySymbol(symbol string) ([]*PositionRecord, error)
 	var positions []*PositionRecord
 	for rows.Next() {
 		pos := &PositionRecord{}
+		var trailingDistance, unrealizedPnL, atr, closePrice, realizedPnL sql.NullFloat64
+		var closeTime sql.NullTime
+		var closeReason sql.NullString
+
 		err := rows.Scan(
 			&pos.ID, &pos.Symbol, &pos.Side, &pos.EntryPrice, &pos.EntryTime, &pos.Quantity, &pos.Leverage,
 			&pos.InitialStopLoss, &pos.CurrentStopLoss, &pos.StopLossType,
-			&pos.TrailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
-			&pos.UnrealizedPnL, &pos.OpenReason, &pos.ATR, &pos.Closed,
-			&pos.CloseTime, &pos.ClosePrice, &pos.CloseReason, &pos.RealizedPnL,
+			&trailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
+			&unrealizedPnL, &pos.OpenReason, &atr, &pos.Closed,
+			&closeTime, &closePrice, &closeReason, &realizedPnL,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
+
+		// Handle NULL values
+		// 处理 NULL 值
+		if trailingDistance.Valid {
+			pos.TrailingDistance = trailingDistance.Float64
+		}
+		if unrealizedPnL.Valid {
+			pos.UnrealizedPnL = unrealizedPnL.Float64
+		}
+		if atr.Valid {
+			pos.ATR = atr.Float64
+		}
+		if closeTime.Valid {
+			pos.CloseTime = &closeTime.Time
+		}
+		if closePrice.Valid {
+			pos.ClosePrice = closePrice.Float64
+		}
+		if closeReason.Valid {
+			pos.CloseReason = closeReason.String
+		}
+		if realizedPnL.Valid {
+			pos.RealizedPnL = realizedPnL.Float64
+		}
+
 		positions = append(positions, pos)
 	}
 

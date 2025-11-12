@@ -372,11 +372,15 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				baseSymbol := strings.Split(sym, "/")[0]
 
 				sentiment := dataflows.GetSentimentIndicators(ctx, baseSymbol)
-				report := dataflows.FormatSentimentReport(sentiment)
-
-				g.state.SetSentimentReport(sym, report)
-
-				g.logger.Success(fmt.Sprintf("  ✅ %s 情绪分析完成", sym))
+				if sentiment == nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  %s 市场情绪数据获取失败", sym))
+					report := dataflows.FormatSentimentReport(nil)
+					g.state.SetSentimentReport(sym, report)
+				} else {
+					report := dataflows.FormatSentimentReport(sentiment)
+					g.state.SetSentimentReport(sym, report)
+					g.logger.Success(fmt.Sprintf("  ✅ %s 情绪分析完成", sym))
+				}
 			}(symbol)
 		}
 
@@ -644,7 +648,6 @@ func (g *SimpleTradingGraph) Run(ctx context.Context) (map[string]any, error) {
 	}
 
 	input := map[string]any{
-		"symbol":    g.config.CryptoSymbol,
 		"timeframe": g.config.CryptoTimeframe,
 	}
 

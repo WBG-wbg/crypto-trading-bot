@@ -139,7 +139,7 @@ func (tc *TradeCoordinator) preExecutionChecks(ctx context.Context, symbol strin
 
 	// Check 2: Verify symbol exists and is trading
 	// 检查 2: 验证交易对存在且正在交易
-	binanceSymbol := tc.config.GetBinanceSymbol()
+	binanceSymbol := tc.config.GetBinanceSymbolFor(symbol)
 	ticker, err := tc.executor.client.NewListPriceChangeStatsService().Symbol(binanceSymbol).Do(ctx)
 	if err != nil {
 		return fmt.Errorf("无法获取交易对价格: %w", err)

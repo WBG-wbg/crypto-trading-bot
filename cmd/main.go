@@ -180,9 +180,17 @@ func main() {
 		portfolioMgr := portfolio.NewPortfolioManager(cfg, executor, log)
 		if err := portfolioMgr.UpdateBalance(ctx); err != nil {
 			log.Error(fmt.Sprintf("获取账户余额失败: %v", err))
-		} else {
-			log.Info(portfolioMgr.GetPortfolioSummary())
 		}
+
+		// Update positions for all symbols
+		// 更新所有交易对的持仓信息
+		for _, symbol := range cfg.CryptoSymbols {
+			if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+			}
+		}
+
+		log.Info(portfolioMgr.GetPortfolioSummary())
 
 		// Initialize trade coordinator
 		// 初始化交易协调器
@@ -354,9 +362,17 @@ func main() {
 		log.Subheader("执行后投资组合状态", '─', 80)
 		if err := portfolioMgr.UpdateBalance(ctx); err != nil {
 			log.Warning(fmt.Sprintf("⚠️  获取更新后的余额失败: %v", err))
-		} else {
-			log.Info(portfolioMgr.GetPortfolioSummary())
 		}
+
+		// Update positions for all symbols
+		// 更新所有交易对的持仓信息
+		for _, symbol := range cfg.CryptoSymbols {
+			if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+			}
+		}
+
+		log.Info(portfolioMgr.GetPortfolioSummary())
 
 		// Display execution summary
 		// 显示执行摘要

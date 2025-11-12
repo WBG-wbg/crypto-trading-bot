@@ -75,14 +75,21 @@ func printUsage() {
 }
 
 func handleStats(db *storage.Storage, cfg *config.Config) {
-	stats, err := db.GetSessionStats(cfg.CryptoSymbol)
+	// Use first symbol from config or ask user
+	symbol := cfg.CryptoSymbols[0]
+	if len(cfg.CryptoSymbols) > 1 {
+		fmt.Printf("Multiple symbols configured: %v\n", cfg.CryptoSymbols)
+		fmt.Printf("Showing stats for: %s\n\n", symbol)
+	}
+
+	stats, err := db.GetSessionStats(symbol)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get stats: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Println("=== Trading Sessions Statistics ===")
-	fmt.Printf("Symbol:           %s\n", cfg.CryptoSymbol)
+	fmt.Printf("Symbol:           %s\n", symbol)
 	fmt.Printf("Total Sessions:   %d\n", stats["total_sessions"].(int))
 	fmt.Printf("Executed Trades:  %d\n", stats["executed_count"].(int))
 	fmt.Printf("Execution Rate:   %.1f%%\n", stats["execution_rate"].(float64))

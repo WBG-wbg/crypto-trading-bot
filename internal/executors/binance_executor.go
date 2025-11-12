@@ -214,7 +214,7 @@ func (e *BinanceExecutor) SetupExchange(ctx context.Context, symbol string, leve
 	// Set leverage with retry
 	err := e.withRetry(func() error {
 		_, err := e.client.NewChangeLeverageService().
-			Symbol(e.config.GetBinanceSymbol()).
+			Symbol(e.config.GetBinanceSymbolFor(symbol)).
 			Leverage(leverage).
 			Do(ctx)
 		return err
@@ -249,7 +249,7 @@ func (e *BinanceExecutor) GetCurrentPosition(ctx context.Context, symbol string)
 
 	err := e.withRetry(func() error {
 		positions, err := e.client.NewGetPositionRiskService().
-			Symbol(e.config.GetBinanceSymbol()).
+			Symbol(e.config.GetBinanceSymbolFor(symbol)).
 			Do(ctx)
 
 		if err != nil {
@@ -371,7 +371,7 @@ func (e *BinanceExecutor) ExecuteTrade(ctx context.Context, symbol string, actio
 }
 
 func (e *BinanceExecutor) executeBuy(ctx context.Context, symbol string, currentPosition *Position, amount float64, result *TradeResult) error {
-	binanceSymbol := e.config.GetBinanceSymbol()
+	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
 
 	// Close short position if exists
 	if currentPosition != nil && currentPosition.Side == "short" {
@@ -428,7 +428,7 @@ func (e *BinanceExecutor) executeBuy(ctx context.Context, symbol string, current
 }
 
 func (e *BinanceExecutor) executeSell(ctx context.Context, symbol string, currentPosition *Position, amount float64, result *TradeResult) error {
-	binanceSymbol := e.config.GetBinanceSymbol()
+	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
 
 	// Close long position if exists
 	if currentPosition != nil && currentPosition.Side == "long" {
@@ -492,7 +492,7 @@ func (e *BinanceExecutor) executeCloseLong(ctx context.Context, symbol string, c
 	}
 
 	e.logger.Info("📤 平多仓...")
-	binanceSymbol := e.config.GetBinanceSymbol()
+	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
 	positionSide := futures.PositionSideTypeLong
 	if e.positionMode == PositionModeOneWay {
 		positionSide = futures.PositionSideTypeBoth
@@ -526,7 +526,7 @@ func (e *BinanceExecutor) executeCloseShort(ctx context.Context, symbol string, 
 	}
 
 	e.logger.Info("📤 平空仓...")
-	binanceSymbol := e.config.GetBinanceSymbol()
+	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
 	positionSide := futures.PositionSideTypeShort
 	if e.positionMode == PositionModeOneWay {
 		positionSide = futures.PositionSideTypeBoth
@@ -585,7 +585,7 @@ func (e *BinanceExecutor) GetPositionSummary(ctx context.Context, symbol string)
 		}
 
 		// Get current price
-		ticker, _ := e.client.NewListPriceChangeStatsService().Symbol(e.config.GetBinanceSymbol()).Do(ctx)
+		ticker, _ := e.client.NewListPriceChangeStatsService().Symbol(e.config.GetBinanceSymbolFor(symbol)).Do(ctx)
 		currentPrice := position.EntryPrice
 		if len(ticker) > 0 {
 			currentPrice, _ = parseFloat(ticker[0].LastPrice)

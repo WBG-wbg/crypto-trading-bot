@@ -141,11 +141,82 @@ func main() {
 		log.Info("暂无活跃持仓")
 	}
 
+	// Initialize portfolio manager for balance tracking
+	// 初始化投资组合管理器用于余额跟踪
+	portfolioMgr := portfolio.NewPortfolioManager(cfg, executor, log)
+
+	// Save initial balance snapshot
+	// 保存初始余额快照
+	log.Subheader("保存初始余额快照", '─', 80)
+	if err := portfolioMgr.UpdateBalance(ctx); err != nil {
+		log.Warning(fmt.Sprintf("⚠️  获取初始余额失败: %v", err))
+	} else {
+		// Update positions for all symbols
+		// 更新所有交易对的持仓信息
+		for _, symbol := range cfg.CryptoSymbols {
+			if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+			}
+		}
+
+		initialBalance := &storage.BalanceHistory{
+			Timestamp:        time.Now(),
+			TotalBalance:     portfolioMgr.GetTotalBalance(),
+			AvailableBalance: portfolioMgr.GetAvailableBalance(),
+			UnrealizedPnL:    portfolioMgr.GetTotalUnrealizedPnL(),
+			Positions:        portfolioMgr.GetPositionCount(),
+		}
+		if err := db.SaveBalanceHistory(initialBalance); err != nil {
+			log.Warning(fmt.Sprintf("⚠️  保存初始余额快照失败: %v", err))
+		} else {
+			log.Success(fmt.Sprintf("✅ 初始余额快照已保存: 总额=%.2f USDT, 可用=%.2f USDT, 持仓=%d",
+				initialBalance.TotalBalance, initialBalance.AvailableBalance, initialBalance.Positions))
+		}
+	}
+
 	// Start real-time position monitoring in background
 	// 在后台启动实时持仓监控
 	go func() {
 		log.Success("🔍 启动持仓监控，间隔: 10 秒")
 		globalStopLossManager.MonitorPositions(10 * time.Second)
+	}()
+
+	// Start balance history recording in background
+	// 在后台启动余额历史记录
+	go func() {
+		log.Success("📊 启动余额历史记录，间隔: 5 分钟")
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			// Update balance
+			if err := portfolioMgr.UpdateBalance(ctx); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  更新余额失败: %v", err))
+				continue
+			}
+
+			// Update positions for all symbols
+			for _, symbol := range cfg.CryptoSymbols {
+				if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+					log.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+				}
+			}
+
+			// Save balance snapshot
+			balanceHistory := &storage.BalanceHistory{
+				Timestamp:        time.Now(),
+				TotalBalance:     portfolioMgr.GetTotalBalance(),
+				AvailableBalance: portfolioMgr.GetAvailableBalance(),
+				UnrealizedPnL:    portfolioMgr.GetTotalUnrealizedPnL(),
+				Positions:        portfolioMgr.GetPositionCount(),
+			}
+			if err := db.SaveBalanceHistory(balanceHistory); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  保存余额历史失败: %v", err))
+			} else {
+				log.Info(fmt.Sprintf("💾 余额快照已保存: %.2f USDT (持仓: %d)",
+					balanceHistory.TotalBalance, balanceHistory.Positions))
+			}
+		}
 	}()
 
 	// Start web server
@@ -308,9 +379,17 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 		portfolioMgr := portfolio.NewPortfolioManager(cfg, executor, log)
 		if err := portfolioMgr.UpdateBalance(ctx); err != nil {
 			log.Error(fmt.Sprintf("获取账户余额失败: %v", err))
-		} else {
-			log.Info(portfolioMgr.GetPortfolioSummary())
 		}
+
+		// Update positions for all symbols
+		// 更新所有交易对的持仓信息
+		for _, symbol := range cfg.CryptoSymbols {
+			if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+			}
+		}
+
+		log.Info(portfolioMgr.GetPortfolioSummary())
 
 		// Initialize trade coordinator
 		// 初始化交易协调器
@@ -499,8 +578,29 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 		log.Subheader("执行后投资组合状态", '─', 80)
 		if err := portfolioMgr.UpdateBalance(ctx); err != nil {
 			log.Warning(fmt.Sprintf("⚠️  获取更新后的余额失败: %v", err))
-		} else {
-			log.Info(portfolioMgr.GetPortfolioSummary())
+		}
+
+		// Update positions for all symbols
+		// 更新所有交易对的持仓信息
+		for _, symbol := range cfg.CryptoSymbols {
+			if err := portfolioMgr.UpdatePosition(ctx, symbol); err != nil {
+				log.Warning(fmt.Sprintf("⚠️  获取 %s 持仓信息失败: %v", symbol, err))
+			}
+		}
+
+		log.Info(portfolioMgr.GetPortfolioSummary())
+
+		// Save balance history to database
+		// 保存余额历史到数据库
+		balanceHistory := &storage.BalanceHistory{
+			Timestamp:        time.Now(),
+			TotalBalance:     portfolioMgr.GetTotalBalance(),
+			AvailableBalance: portfolioMgr.GetAvailableBalance(),
+			UnrealizedPnL:    portfolioMgr.GetTotalUnrealizedPnL(),
+			Positions:        portfolioMgr.GetPositionCount(),
+		}
+		if err := db.SaveBalanceHistory(balanceHistory); err != nil {
+			log.Warning(fmt.Sprintf("⚠️  保存余额历史失败: %v", err))
 		}
 
 		// Display execution summary

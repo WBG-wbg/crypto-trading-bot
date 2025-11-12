@@ -71,7 +71,7 @@ func (t *MarketDataTool) InvokableRun(ctx context.Context, argumentsInJSON strin
 	indicators := dataflows.CalculateIndicators(ohlcvData)
 
 	// Generate report
-	report := dataflows.FormatIndicatorReport(t.config.CryptoSymbol, timeframe, ohlcvData, indicators)
+	report := dataflows.FormatIndicatorReport(args.Symbol, timeframe, ohlcvData, indicators)
 
 	return report, nil
 }

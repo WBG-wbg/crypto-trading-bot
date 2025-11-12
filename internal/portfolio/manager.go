@@ -201,3 +201,39 @@ func (pm *PortfolioManager) RebalanceAllocation(symbols []string) map[string]flo
 
 	return allocation
 }
+
+// GetTotalBalance returns the total balance
+// GetTotalBalance 返回总余额
+func (pm *PortfolioManager) GetTotalBalance() float64 {
+	return pm.totalBalance
+}
+
+// GetAvailableBalance returns the available balance
+// GetAvailableBalance 返回可用余额
+func (pm *PortfolioManager) GetAvailableBalance() float64 {
+	return pm.availableBalance
+}
+
+// GetTotalUnrealizedPnL calculates total unrealized PnL across all positions
+// GetTotalUnrealizedPnL 计算所有持仓的总未实现盈亏
+func (pm *PortfolioManager) GetTotalUnrealizedPnL() float64 {
+	totalPnL := 0.0
+	for _, posInfo := range pm.positions {
+		if posInfo.Position != nil && posInfo.Position.Size > 0 {
+			totalPnL += posInfo.Position.UnrealizedPnL
+		}
+	}
+	return totalPnL
+}
+
+// GetPositionCount returns the number of open positions
+// GetPositionCount 返回开仓数量
+func (pm *PortfolioManager) GetPositionCount() int {
+	count := 0
+	for _, posInfo := range pm.positions {
+		if posInfo.Position != nil && posInfo.Position.Size > 0 {
+			count++
+		}
+	}
+	return count
+}
