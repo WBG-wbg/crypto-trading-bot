@@ -982,8 +982,8 @@
                 {{range .Batches}}
                 <div class="batch-item">
                     <div class="batch-header">
-                        <span class="batch-id">批次 {{.BatchID}}</span>
-                        <span class="batch-time">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</span>
+                        <span class="batch-id">批次 {{.CreatedAt.Format "2006-01-02 15:04:05"}}</span>
+                        <span class="batch-time">{{len .Sessions}} 个交易对</span>
                     </div>
                     <div class="batch-symbols">
                         <strong>交易对:</strong>

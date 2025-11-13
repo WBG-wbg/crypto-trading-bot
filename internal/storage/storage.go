@@ -329,13 +329,18 @@ func (s *Storage) GetSessionByID(id int64) (*TradingSession, error) {
 // GetLatestBatches retrieves the latest N batches (grouped by batch_id)
 // GetLatestBatches 获取最新的 N 个批次（按 batch_id 分组）
 func (s *Storage) GetLatestBatches(limit int) ([]*BatchSession, error) {
-	// First, get the latest N distinct batch_ids
-	// 首先，获取最新的 N 个不同的 batch_id
+	// Use a subquery to get one representative session per batch_id
+	// 使用子查询获取每个 batch_id 的代表性会话
 	batchQuery := `
-	SELECT DISTINCT batch_id, created_at, timeframe
-	FROM trading_sessions
-	WHERE batch_id IS NOT NULL AND batch_id != ''
-	ORDER BY created_at DESC
+	SELECT t1.batch_id, t1.created_at, t1.timeframe
+	FROM trading_sessions t1
+	INNER JOIN (
+		SELECT batch_id, MIN(id) as min_id
+		FROM trading_sessions
+		WHERE batch_id IS NOT NULL AND batch_id != ''
+		GROUP BY batch_id
+	) t2 ON t1.batch_id = t2.batch_id AND t1.id = t2.min_id
+	ORDER BY t1.created_at DESC
 	LIMIT ?
 	`
 
