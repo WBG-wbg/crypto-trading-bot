@@ -65,7 +65,7 @@
 
 ```bash
 # 克隆项目
-git clone <repository-url>
+git clone https://github.com/Oakshen/crypto-trading-bot.git
 cd crypto-trading-bot
 
 # 安装依赖
@@ -91,20 +91,20 @@ BINANCE_API_SECRET=your_api_secret
 BINANCE_TEST_MODE=true  # ⚠️ 强烈建议先使用测试模式
 
 # 交易对（支持单个或多个）
-CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT
+CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT
 
 # 时间周期
-CRYPTO_TIMEFRAME=1h
+CRYPTO_TIMEFRAME=15m
 
 # 杠杆（支持固定或动态）
-BINANCE_LEVERAGE=10      # 固定 10 倍
-# BINANCE_LEVERAGE=10-20  # 动态 10-20 倍
+#BINANCE_LEVERAGE=10      # 固定 10 倍
+BINANCE_LEVERAGE=10-20  # 动态 10-20 倍(强烈建议)
 
 # OpenAI API（可选）
 OPENAI_API_KEY=your_openai_key
 
 # 自动执行
-AUTO_EXECUTE=false  # 设置为 true 启用自动交易
+AUTO_EXECUTE=true  # 设置为 true 启用自动交易(！！！先设置为 false，测试过再改为 true)
 ```
 
 ### 运行
@@ -208,13 +208,6 @@ START → [市场分析师, 情绪分析师]（并行）
        情绪分析师 ──────→ 交易员（综合决策）
                               ↓
                             END
-```
-
-### 止损管理阶段
-
-```
-开仓 → 固定止损 → 保本止损 → 追踪止损 → 平仓
-      (初始)    (盈利>1R)   (盈利>2R)
 ```
 
 ## ⚙️ 常用命令

@@ -65,7 +65,7 @@ Uses Large Language Models (LLM) to analyze market data, generate trading signal
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/Oakshen/crypto-trading-bot.git
 cd crypto-trading-bot
 
 # Install dependencies

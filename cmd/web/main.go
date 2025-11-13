@@ -342,6 +342,11 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 	// 为每个交易对保存分析结果到数据库，包含该交易对的专属决策
 	log.Subheader("保存分析结果", '─', 80)
 
+	// Generate batch ID for this execution (all symbols in this run share the same batch_id)
+	// 为本次执行生成批次 ID（本次运行的所有交易对共享相同的 batch_id）
+	batchID := fmt.Sprintf("batch-%d", time.Now().Unix())
+	log.Info(fmt.Sprintf("批次 ID: %s", batchID))
+
 	// Parse multi-currency decision to extract symbol-specific decisions
 	// 解析多币种决策以提取每个交易对的专属决策
 	symbolDecisions := agents.ParseMultiCurrencyDecision(decision, cfg.CryptoSymbols)
@@ -371,6 +376,7 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 		}
 
 		session := &storage.TradingSession{
+			BatchID:         batchID, // ✅ Batch ID shared across all symbols in this run
 			Symbol:          symbol,
 			Timeframe:       cfg.CryptoTimeframe,
 			CreatedAt:       time.Now(),
@@ -378,7 +384,8 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 			CryptoReport:    reports.CryptoReport,
 			SentimentReport: reports.SentimentReport,
 			PositionInfo:    reports.PositionInfo,
-			Decision:        symbolDecision, // ✅ Symbol-specific decision instead of full text
+			Decision:        symbolDecision, // ✅ Symbol-specific decision
+			FullDecision:    decision,       // ✅ Full LLM decision (all symbols)
 			Executed:        false,
 			ExecutionResult: "",
 		}

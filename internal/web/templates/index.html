@@ -328,6 +328,142 @@
             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
 
+        /* Batch Styles - 批次样式 */
+        .batch-item {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            transition: all 0.2s;
+        }
+
+        .batch-item:hover {
+            background: #f3f4f6;
+            border-left-color: #764ba2;
+        }
+
+        .batch-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .batch-id {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 1em;
+        }
+
+        .batch-time {
+            color: #6b7280;
+            font-size: 0.9em;
+        }
+
+        .batch-symbols {
+            margin-bottom: 15px;
+            color: #374151;
+            font-size: 0.95em;
+        }
+
+        .batch-full-decision {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .decision-text {
+            margin: 10px 0 0 0;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.6;
+            color: #1f2937;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .batch-details {
+            margin-top: 15px;
+        }
+
+        .batch-details summary {
+            cursor: pointer;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            font-weight: 600;
+            color: #667eea;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .batch-details summary:hover {
+            background: #f3f4f6;
+            transform: translateX(3px);
+        }
+
+        .symbol-decisions {
+            margin-top: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .symbol-decision-item {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .symbol-decision-item:hover {
+            border-color: #667eea;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+            transform: translateX(3px);
+        }
+
+        .symbol-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .symbol-action {
+            margin-bottom: 10px;
+        }
+
+        .symbol-decision-text {
+            font-size: 0.9em;
+            color: #374151;
+            line-height: 1.5;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f9fafb;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .symbol-executed {
+            font-size: 0.85em;
+            color: #6b7280;
+        }
+
+        .execution-result {
+            color: #667eea;
+            font-style: italic;
+        }
+
         .no-data {
             text-align: center;
             padding: 40px;
@@ -528,10 +664,12 @@
             // Update immediately
             // 立即更新一次
             updateRealtimeBalance();
+            updateLivePositions();
 
             // Then update every 30 seconds
             // 之后每30秒更新一次
             setInterval(updateRealtimeBalance, 30000);
+            setInterval(updateLivePositions, 30000);
         }
 
         function updateRealtimeBalance() {
@@ -568,6 +706,130 @@
                 .catch(error => {
                     console.error('更新实时余额失败:', error);
                 });
+        }
+
+        function updateLivePositions() {
+            fetch('/api/positions/live')
+                .then(response => response.json())
+                .then(data => {
+                    renderPositions(data.positions);
+
+                    // Update positions count in stats
+                    // 更新统计区域的持仓数量
+                    const posCountElement = document.querySelector('.stat-card:last-child .stat-value');
+                    if (posCountElement) {
+                        posCountElement.textContent = data.count;
+                    }
+
+                    console.log('Positions updated:', data.timestamp, 'Count:', data.count);
+                })
+                .catch(error => {
+                    console.error('更新实时持仓失败:', error);
+                });
+        }
+
+        function renderPositions(positions) {
+            const container = document.querySelector('.positions-container');
+
+            if (!positions || positions.length === 0) {
+                // No positions - hide container
+                // 无持仓 - 隐藏容器
+                if (container) {
+                    container.style.display = 'none';
+                }
+                return;
+            }
+
+            // Ensure container exists
+            // 确保容器存在
+            if (!container) {
+                // Create container if it doesn't exist
+                // 如果容器不存在则创建
+                const newContainer = document.createElement('div');
+                newContainer.className = 'positions-container';
+                newContainer.innerHTML = '<h2>💼 活跃持仓</h2><div class="position-list"></div>';
+
+                // Insert before sessions container
+                // 在会话容器前插入
+                const sessionsContainer = document.querySelector('.sessions-container');
+                if (sessionsContainer) {
+                    sessionsContainer.parentNode.insertBefore(newContainer, sessionsContainer);
+                }
+                return renderPositions(positions); // Retry with new container
+            }
+
+            // Show container
+            // 显示容器
+            container.style.display = 'block';
+
+            // Get or create position list
+            // 获取或创建持仓列表
+            let positionList = container.querySelector('.position-list');
+            if (!positionList) {
+                positionList = document.createElement('div');
+                positionList.className = 'position-list';
+                container.appendChild(positionList);
+            }
+
+            // Clear existing positions
+            // 清空现有持仓
+            positionList.innerHTML = '';
+
+            // Render each position
+            // 渲染每个持仓
+            positions.forEach(pos => {
+                const posItem = document.createElement('div');
+                posItem.className = 'position-item' + (pos.side === 'short' ? ' short' : '');
+
+                const sideText = pos.side === 'long' ? '📈 多头' : '📉 空头';
+                const roePct = pos.roe || 0;
+                const roeClass = roePct >= 0 ? 'profit-positive' : 'profit-negative';
+
+                posItem.innerHTML = `
+                    <div class="position-detail">
+                        <div class="position-detail-label">交易对</div>
+                        <div class="position-detail-value">${pos.symbol}</div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">方向</div>
+                        <div class="position-detail-value">${sideText}</div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">杠杆</div>
+                        <div class="position-detail-value">${pos.leverage}x</div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">持仓量</div>
+                        <div class="position-detail-value">${pos.size.toFixed(4)}</div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">入场价格</div>
+                        <div class="position-detail-value">$${pos.entry_price.toFixed(2)}</div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">当前价格</div>
+                        <div class="position-detail-value">$${pos.current_price.toFixed(2)}</div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">未实现盈亏</div>
+                        <div class="position-detail-value ${roeClass}">
+                            ${pos.unrealized_pnl >= 0 ? '+' : ''}${pos.unrealized_pnl.toFixed(2)} USDT
+                        </div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">回报率 (ROE)</div>
+                        <div class="position-detail-value ${roeClass}">
+                            ${roePct >= 0 ? '+' : ''}${roePct.toFixed(2)}%
+                        </div>
+                    </div>
+                    <div class="position-detail">
+                        <div class="position-detail-label">强平价格</div>
+                        <div class="position-detail-value">$${pos.liquidation_price.toFixed(2)}</div>
+                    </div>
+                `;
+
+                positionList.appendChild(posItem);
+            });
         }
     </script>
 </head>
@@ -714,54 +976,74 @@
         {{end}}
 
         <div class="sessions-container">
-            <h2>📊 最近的分析会话</h2>
-            {{if .Sessions}}
+            <h2>📊 最近的分析批次</h2>
+            {{if .Batches}}
             <div class="session-list">
-                {{range .Sessions}}
-                <div class="session-item" onclick="window.location.href='/session/{{.ID}}'">
-                    <div class="session-header">
-                        <span class="session-id">会话 #{{.ID}}</span>
-                        <span class="session-time">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</span>
+                {{range .Batches}}
+                <div class="batch-item">
+                    <div class="batch-header">
+                        <span class="batch-id">批次 {{.BatchID}}</span>
+                        <span class="batch-time">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</span>
                     </div>
-                    <div class="session-main-info">
-                        <div class="session-info">
-                            <strong>交易对:</strong> {{.Symbol}} |
-                            <strong>时间周期:</strong> {{.Timeframe}} |
-                            <strong>已执行:</strong> {{if .Executed}}✅ 是{{else}}⏸ 否{{end}}
-                        </div>
-                        {{if .Decision}}
-                        <div class="session-action">
-                            {{$action := extractAction .Decision}}
-                            {{if eq $action "BUY"}}
-                                <span class="action-badge action-buy">📈 BUY</span>
-                            {{else if eq $action "SELL"}}
-                                <span class="action-badge action-sell">📉 SELL</span>
-                            {{else if eq $action "CLOSE_LONG"}}
-                                <span class="action-badge action-close">🔒 平多</span>
-                            {{else if eq $action "CLOSE_SHORT"}}
-                                <span class="action-badge action-close">🔒 平空</span>
-                            {{else if eq $action "HOLD"}}
-                                <span class="action-badge action-hold">💤 HOLD</span>
-                            {{else}}
-                                <span class="action-badge action-unknown">❓ {{$action}}</span>
-                            {{end}}
-                        </div>
+                    <div class="batch-symbols">
+                        <strong>交易对:</strong>
+                        {{range $index, $session := .Sessions}}
+                            {{if $index}}, {{end}}{{$session.Symbol}}
                         {{end}}
+                        | <strong>时间周期:</strong> {{.Timeframe}}
                     </div>
-                    {{if .Decision}}
-                    <div class="session-decision">
-                        {{.Decision}}
+                    {{if and .Sessions (index .Sessions 0).FullDecision}}
+                    <div class="batch-full-decision">
+                        <strong>LLM 完整决策:</strong>
+                        <pre class="decision-text">{{(index .Sessions 0).FullDecision}}</pre>
                     </div>
                     {{end}}
-                    <a href="/session/{{.ID}}" class="view-detail-btn" onclick="event.stopPropagation()">
-                        📋 查看详情
-                    </a>
+                    <details class="batch-details">
+                        <summary>查看各交易对详细决策 ({{len .Sessions}} 个)</summary>
+                        <div class="symbol-decisions">
+                            {{range .Sessions}}
+                            <div class="symbol-decision-item" onclick="window.location.href='/session/{{.ID}}'">
+                                <div class="symbol-header">
+                                    <strong>{{.Symbol}}</strong>
+                                    <span class="session-time">会话 #{{.ID}}</span>
+                                </div>
+                                {{if .Decision}}
+                                <div class="symbol-action">
+                                    {{$action := extractAction .Decision}}
+                                    {{if eq $action "BUY"}}
+                                        <span class="action-badge action-buy">📈 BUY</span>
+                                    {{else if eq $action "SELL"}}
+                                        <span class="action-badge action-sell">📉 SELL</span>
+                                    {{else if eq $action "CLOSE_LONG"}}
+                                        <span class="action-badge action-close">🔒 平多</span>
+                                    {{else if eq $action "CLOSE_SHORT"}}
+                                        <span class="action-badge action-close">🔒 平空</span>
+                                    {{else if eq $action "HOLD"}}
+                                        <span class="action-badge action-hold">💤 HOLD</span>
+                                    {{else}}
+                                        <span class="action-badge action-unknown">❓ {{$action}}</span>
+                                    {{end}}
+                                </div>
+                                <div class="symbol-decision-text">
+                                    {{.Decision}}
+                                </div>
+                                {{end}}
+                                <div class="symbol-executed">
+                                    <strong>已执行:</strong> {{if .Executed}}✅ 是{{else}}⏸ 否{{end}}
+                                    {{if .ExecutionResult}}
+                                    | <span class="execution-result">{{.ExecutionResult}}</span>
+                                    {{end}}
+                                </div>
+                            </div>
+                            {{end}}
+                        </div>
+                    </details>
                 </div>
                 {{end}}
             </div>
             {{else}}
             <div class="no-data">
-                <p>暂无分析会话记录</p>
+                <p>暂无分析批次记录</p>
                 <p style="margin-top: 10px; font-size: 0.9em;">运行主程序后，分析结果将显示在这里</p>
             </div>
             {{end}}

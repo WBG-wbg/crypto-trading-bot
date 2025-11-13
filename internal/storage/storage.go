@@ -12,6 +12,7 @@ import (
 // TradingSession 表示一次交易分析会话
 type TradingSession struct {
 	ID              int64
+	BatchID         string // 批次ID - 同一次运行的所有交易对共享相同 batch_id / Batch ID - all symbols in same run share same batch_id
 	Symbol          string
 	Timeframe       string
 	CreatedAt       time.Time
@@ -19,7 +20,8 @@ type TradingSession struct {
 	CryptoReport    string
 	SentimentReport string
 	PositionInfo    string
-	Decision        string
+	Decision        string // 该交易对的专属决策 / Symbol-specific decision
+	FullDecision    string // LLM 原始完整决策（包含所有交易对）/ Full LLM decision (all symbols)
 	Executed        bool
 	ExecutionResult string
 }
@@ -73,6 +75,15 @@ type BalanceHistory struct {
 	Positions        int
 }
 
+// BatchSession represents a batch of trading sessions (all symbols from one execution)
+// BatchSession 表示一批交易会话（一次运行中所有交易对的会话）
+type BatchSession struct {
+	BatchID   string
+	CreatedAt time.Time
+	Timeframe string
+	Sessions  []*TradingSession
+}
+
 // Storage handles SQLite database operations
 type Storage struct {
 	db *sql.DB
@@ -106,6 +117,7 @@ func (s *Storage) initSchema() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS trading_sessions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		batch_id TEXT,
 		symbol TEXT NOT NULL,
 		timeframe TEXT NOT NULL,
 		created_at DATETIME NOT NULL,
@@ -114,6 +126,7 @@ func (s *Storage) initSchema() error {
 		sentiment_report TEXT,
 		position_info TEXT,
 		decision TEXT,
+		full_decision TEXT,
 		leverage INTEGER,
 		executed BOOLEAN DEFAULT 0,
 		execution_result TEXT
@@ -121,6 +134,7 @@ func (s *Storage) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_symbol_created_at ON trading_sessions(symbol, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_created_at ON trading_sessions(created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_batch_id ON trading_sessions(batch_id);
 
 	CREATE TABLE IF NOT EXISTS positions (
 		id TEXT PRIMARY KEY,
@@ -175,21 +189,36 @@ func (s *Storage) initSchema() error {
 	`
 
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrate existing database: add batch_id and full_decision columns if they don't exist
+	// 迁移现有数据库：如果不存在则添加 batch_id 和 full_decision 字段
+	migrationSQL := `
+	ALTER TABLE trading_sessions ADD COLUMN batch_id TEXT;
+	ALTER TABLE trading_sessions ADD COLUMN full_decision TEXT;
+	`
+	// Ignore errors as columns may already exist
+	// 忽略错误，因为字段可能已经存在
+	s.db.Exec(migrationSQL)
+
+	return nil
 }
 
 // SaveSession saves a trading session to the database
 func (s *Storage) SaveSession(session *TradingSession) (int64, error) {
 	query := `
 	INSERT INTO trading_sessions (
-		symbol, timeframe, created_at,
+		batch_id, symbol, timeframe, created_at,
 		market_report, crypto_report, sentiment_report,
-		position_info, decision, executed, execution_result
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		position_info, decision, full_decision, executed, execution_result
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.db.Exec(
 		query,
+		session.BatchID,
 		session.Symbol,
 		session.Timeframe,
 		session.CreatedAt,
@@ -198,6 +227,7 @@ func (s *Storage) SaveSession(session *TradingSession) (int64, error) {
 		session.SentimentReport,
 		session.PositionInfo,
 		session.Decision,
+		session.FullDecision,
 		session.Executed,
 		session.ExecutionResult,
 	)
@@ -217,9 +247,9 @@ func (s *Storage) SaveSession(session *TradingSession) (int64, error) {
 // GetLatestSessions retrieves the latest N sessions
 func (s *Storage) GetLatestSessions(limit int) ([]*TradingSession, error) {
 	query := `
-	SELECT id, symbol, timeframe, created_at,
+	SELECT id, batch_id, symbol, timeframe, created_at,
 		   market_report, crypto_report, sentiment_report,
-		   position_info, decision, executed, execution_result
+		   position_info, decision, full_decision, executed, execution_result
 	FROM trading_sessions
 	ORDER BY created_at DESC
 	LIMIT ?
@@ -236,6 +266,7 @@ func (s *Storage) GetLatestSessions(limit int) ([]*TradingSession, error) {
 		session := &TradingSession{}
 		err := rows.Scan(
 			&session.ID,
+			&session.BatchID,
 			&session.Symbol,
 			&session.Timeframe,
 			&session.CreatedAt,
@@ -244,6 +275,7 @@ func (s *Storage) GetLatestSessions(limit int) ([]*TradingSession, error) {
 			&session.SentimentReport,
 			&session.PositionInfo,
 			&session.Decision,
+			&session.FullDecision,
 			&session.Executed,
 			&session.ExecutionResult,
 		)
@@ -260,9 +292,9 @@ func (s *Storage) GetLatestSessions(limit int) ([]*TradingSession, error) {
 // GetSessionByID 根据 ID 获取会话
 func (s *Storage) GetSessionByID(id int64) (*TradingSession, error) {
 	query := `
-	SELECT id, symbol, timeframe, created_at,
+	SELECT id, batch_id, symbol, timeframe, created_at,
 		   market_report, crypto_report, sentiment_report,
-		   position_info, decision, executed, execution_result
+		   position_info, decision, full_decision, executed, execution_result
 	FROM trading_sessions
 	WHERE id = ?
 	`
@@ -270,6 +302,7 @@ func (s *Storage) GetSessionByID(id int64) (*TradingSession, error) {
 	session := &TradingSession{}
 	err := s.db.QueryRow(query, id).Scan(
 		&session.ID,
+		&session.BatchID,
 		&session.Symbol,
 		&session.Timeframe,
 		&session.CreatedAt,
@@ -278,6 +311,7 @@ func (s *Storage) GetSessionByID(id int64) (*TradingSession, error) {
 		&session.SentimentReport,
 		&session.PositionInfo,
 		&session.Decision,
+		&session.FullDecision,
 		&session.Executed,
 		&session.ExecutionResult,
 	)
@@ -292,12 +326,95 @@ func (s *Storage) GetSessionByID(id int64) (*TradingSession, error) {
 	return session, nil
 }
 
+// GetLatestBatches retrieves the latest N batches (grouped by batch_id)
+// GetLatestBatches 获取最新的 N 个批次（按 batch_id 分组）
+func (s *Storage) GetLatestBatches(limit int) ([]*BatchSession, error) {
+	// First, get the latest N distinct batch_ids
+	// 首先，获取最新的 N 个不同的 batch_id
+	batchQuery := `
+	SELECT DISTINCT batch_id, created_at, timeframe
+	FROM trading_sessions
+	WHERE batch_id IS NOT NULL AND batch_id != ''
+	ORDER BY created_at DESC
+	LIMIT ?
+	`
+
+	rows, err := s.db.Query(batchQuery, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query batches: %w", err)
+	}
+	defer rows.Close()
+
+	var batches []*BatchSession
+	for rows.Next() {
+		batch := &BatchSession{}
+		err := rows.Scan(&batch.BatchID, &batch.CreatedAt, &batch.Timeframe)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan batch: %w", err)
+		}
+		batches = append(batches, batch)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// For each batch, get all sessions
+	// 对于每个批次，获取所有会话
+	sessionQuery := `
+	SELECT id, batch_id, symbol, timeframe, created_at,
+		   market_report, crypto_report, sentiment_report,
+		   position_info, decision, full_decision, executed, execution_result
+	FROM trading_sessions
+	WHERE batch_id = ?
+	ORDER BY symbol
+	`
+
+	for _, batch := range batches {
+		sessionRows, err := s.db.Query(sessionQuery, batch.BatchID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query sessions for batch %s: %w", batch.BatchID, err)
+		}
+
+		for sessionRows.Next() {
+			session := &TradingSession{}
+			err := sessionRows.Scan(
+				&session.ID,
+				&session.BatchID,
+				&session.Symbol,
+				&session.Timeframe,
+				&session.CreatedAt,
+				&session.MarketReport,
+				&session.CryptoReport,
+				&session.SentimentReport,
+				&session.PositionInfo,
+				&session.Decision,
+				&session.FullDecision,
+				&session.Executed,
+				&session.ExecutionResult,
+			)
+			if err != nil {
+				sessionRows.Close()
+				return nil, fmt.Errorf("failed to scan session: %w", err)
+			}
+			batch.Sessions = append(batch.Sessions, session)
+		}
+		sessionRows.Close()
+
+		if err := sessionRows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	return batches, nil
+}
+
 // GetSessionsBySymbol retrieves sessions for a specific symbol
 func (s *Storage) GetSessionsBySymbol(symbol string, limit int) ([]*TradingSession, error) {
 	query := `
-	SELECT id, symbol, timeframe, created_at,
+	SELECT id, batch_id, symbol, timeframe, created_at,
 		   market_report, crypto_report, sentiment_report,
-		   position_info, decision, executed, execution_result
+		   position_info, decision, full_decision, executed, execution_result
 	FROM trading_sessions
 	WHERE symbol = ?
 	ORDER BY created_at DESC
@@ -315,6 +432,7 @@ func (s *Storage) GetSessionsBySymbol(symbol string, limit int) ([]*TradingSessi
 		session := &TradingSession{}
 		err := rows.Scan(
 			&session.ID,
+			&session.BatchID,
 			&session.Symbol,
 			&session.Timeframe,
 			&session.CreatedAt,
@@ -323,6 +441,7 @@ func (s *Storage) GetSessionsBySymbol(symbol string, limit int) ([]*TradingSessi
 			&session.SentimentReport,
 			&session.PositionInfo,
 			&session.Decision,
+			&session.FullDecision,
 			&session.Executed,
 			&session.ExecutionResult,
 		)

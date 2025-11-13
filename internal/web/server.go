@@ -69,6 +69,7 @@ func (s *Server) setupRoutes() {
 	// API endpoints
 	// API 端点
 	s.hertz.GET("/api/positions", s.handlePositions)
+	s.hertz.GET("/api/positions/live", s.handleLivePositions) // ✅ Real-time positions from Binance
 	s.hertz.GET("/api/positions/:symbol", s.handlePositionsBySymbol)
 	s.hertz.GET("/api/symbols", s.handleSymbols)
 	s.hertz.GET("/api/balance/history", s.handleBalanceHistory)
@@ -102,6 +103,14 @@ func (s *Server) handleIndex(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	// Get batches (grouped sessions) for batch-based display
+	// 获取批次（分组的会话）用于按批次显示
+	batches, err := s.storage.GetLatestBatches(10)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
 	// Get active positions
 	// 获取活跃持仓
 	positions, _ := s.storage.GetActivePositions()
@@ -121,6 +130,7 @@ func (s *Server) handleIndex(ctx context.Context, c *app.RequestContext) {
 		"Timeframe":       s.config.CryptoTimeframe,
 		"Stats":           stats,
 		"Sessions":        sessions,
+		"Batches":         batches, // ✅ Add batches for batch-based display
 		"Positions":       positions,
 		"CurrentTime":     time.Now().Format("2006-01-02 15:04:05"),
 		"NextTradeTime":   s.scheduler.GetNextTimeframeTime().Format("2006-01-02 15:04:05"),
@@ -277,6 +287,83 @@ func (s *Server) handlePositionsBySymbol(ctx context.Context, c *app.RequestCont
 		"symbol":    symbol,
 		"positions": positions,
 		"count":     len(positions),
+	})
+}
+
+// handleLivePositions returns real-time positions directly from Binance
+// handleLivePositions 从币安直接获取实时持仓（不依赖数据库）
+func (s *Server) handleLivePositions(ctx context.Context, c *app.RequestContext) {
+	// Create executor for querying Binance
+	// 创建执行器用于查询币安
+	executor := executors.NewBinanceExecutor(s.config, s.logger)
+
+	// Response structure
+	// 响应结构
+	type PositionResponse struct {
+		Symbol           string  `json:"symbol"`
+		Side             string  `json:"side"`
+		Size             float64 `json:"size"`
+		EntryPrice       float64 `json:"entry_price"`
+		CurrentPrice     float64 `json:"current_price"`
+		UnrealizedPnL    float64 `json:"unrealized_pnl"`
+		ROE              float64 `json:"roe"` // Return on Equity percentage
+		Leverage         int     `json:"leverage"`
+		LiquidationPrice float64 `json:"liquidation_price"`
+	}
+
+	var positions []PositionResponse
+
+	// Query all configured symbols
+	// 查询所有配置的交易对
+	for _, symbol := range s.config.CryptoSymbols {
+		pos, err := executor.GetCurrentPosition(ctx, symbol)
+		if err != nil {
+			s.logger.Warning(fmt.Sprintf("获取 %s 实时持仓失败: %v", symbol, err))
+			continue
+		}
+
+		// Only include positions with non-zero size
+		// 仅包含持仓量不为零的持仓
+		if pos != nil && pos.Size > 0 {
+			// Calculate ROE (Return on Equity) using official Binance formula
+			// 使用币安官方公式计算 ROE（回报率）
+			roe := 0.0
+			if pos.EntryPrice > 0 && pos.Size > 0 && pos.Leverage > 0 {
+				// Initial Margin = (EntryPrice × Quantity) / Leverage
+				// 初始保证金 = (开仓价格 × 数量) / 杠杆
+				initialMargin := (pos.EntryPrice * pos.Size) / float64(pos.Leverage)
+				if initialMargin > 0 {
+					// ROE = (UnrealizedPnL / InitialMargin) × 100%
+					roe = (pos.UnrealizedPnL / initialMargin) * 100
+				}
+			}
+
+			// Get current price (use entry price as fallback)
+			// 获取当前价格（回退到入场价格）
+			currentPrice := pos.EntryPrice
+			if pos.CurrentPrice > 0 {
+				currentPrice = pos.CurrentPrice
+			}
+
+			positions = append(positions, PositionResponse{
+				Symbol:           symbol,
+				Side:             pos.Side,
+				Size:             pos.Size,
+				EntryPrice:       pos.EntryPrice,
+				CurrentPrice:     currentPrice,
+				UnrealizedPnL:    pos.UnrealizedPnL,
+				ROE:              roe,
+				Leverage:         pos.Leverage,
+				LiquidationPrice: pos.LiquidationPrice,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, utils.H{
+		"positions": positions,
+		"count":     len(positions),
+		"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+		"source":    "binance_live", // Indicate this is live data
 	})
 }
 
