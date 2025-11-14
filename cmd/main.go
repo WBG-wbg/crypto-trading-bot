@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	openaiComponent "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/schema"
 	"github.com/oak/crypto-trading-bot/internal/agents"
 	"github.com/oak/crypto-trading-bot/internal/config"
 	"github.com/oak/crypto-trading-bot/internal/constant"
@@ -80,6 +82,47 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Initialize and verify LLM service
+	// 初始化并验证 LLM 服务
+	log.Subheader("验证 LLM 服务", '─', 80)
+
+	llmCfg := &openaiComponent.ChatModelConfig{
+		APIKey:  cfg.APIKey,
+		BaseURL: cfg.BackendURL,
+		Model:   cfg.QuickThinkLLM,
+	}
+
+	// Create ChatModel
+	chatModel, err := openaiComponent.NewChatModel(ctx, llmCfg)
+	if err != nil {
+		log.Error(fmt.Sprintf("❌ 创建 LLM 客户端失败: %v", err))
+		log.Error("请检查 .env 文件中的 OPENAI_API_KEY 和 OPENAI_BASE_URL 配置")
+		os.Exit(1)
+	}
+
+	// Test LLM service with a simple call
+	// 使用简单调用测试 LLM 服务
+	log.Info(fmt.Sprintf("🔍 测试 LLM 服务连接..."))
+	log.Info(fmt.Sprintf("   模型: %s", cfg.QuickThinkLLM))
+	log.Info(fmt.Sprintf("   API: %s", cfg.BackendURL))
+
+	testMessages := []*schema.Message{
+		schema.SystemMessage("你是一个测试助手"),
+		schema.UserMessage("请回复：OK"),
+	}
+
+	testResponse, err := chatModel.Generate(ctx, testMessages)
+	if err != nil {
+		log.Error(fmt.Sprintf("❌ LLM 服务测试失败: %v", err))
+		log.Error(fmt.Sprintf("请检查配置: API=%s, Model=%s", cfg.BackendURL, cfg.QuickThinkLLM))
+		os.Exit(1)
+	}
+
+	log.Success("✅ LLM 服务可用")
+	if testResponse.ResponseMeta != nil && testResponse.ResponseMeta.Usage != nil {
+		log.Info(fmt.Sprintf("   测试消耗 Token: %d", testResponse.ResponseMeta.Usage.TotalTokens))
+	}
 
 	// Setup exchange for all symbols
 	// 为所有交易对设置交易所参数

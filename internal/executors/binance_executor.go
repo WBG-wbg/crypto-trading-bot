@@ -495,14 +495,22 @@ func (e *BinanceExecutor) executeCloseLong(ctx context.Context, symbol string, c
 		positionSide = futures.PositionSideTypeBoth
 	}
 
-	order, err := e.client.NewCreateOrderService().
+	// Create order service
+	// 创建订单服务
+	orderService := e.client.NewCreateOrderService().
 		Symbol(binanceSymbol).
 		Side(futures.SideTypeSell).
 		PositionSide(positionSide).
 		Type(futures.OrderTypeMarket).
-		Quantity(fmt.Sprintf("%.4f", currentPosition.Size)).
-		ReduceOnly(true).
-		Do(ctx)
+		Quantity(fmt.Sprintf("%.4f", currentPosition.Size))
+
+	// Only use ReduceOnly in Hedge mode, not in One-way mode
+	// 只在双向持仓模式使用 ReduceOnly，单向模式不使用
+	if e.positionMode == PositionModeHedge {
+		orderService = orderService.ReduceOnly(true)
+	}
+
+	order, err := orderService.Do(ctx)
 
 	if err != nil {
 		return err
@@ -529,14 +537,22 @@ func (e *BinanceExecutor) executeCloseShort(ctx context.Context, symbol string, 
 		positionSide = futures.PositionSideTypeBoth
 	}
 
-	order, err := e.client.NewCreateOrderService().
+	// Create order service
+	// 创建订单服务
+	orderService := e.client.NewCreateOrderService().
 		Symbol(binanceSymbol).
 		Side(futures.SideTypeBuy).
 		PositionSide(positionSide).
 		Type(futures.OrderTypeMarket).
-		Quantity(fmt.Sprintf("%.4f", currentPosition.Size)).
-		ReduceOnly(true).
-		Do(ctx)
+		Quantity(fmt.Sprintf("%.4f", currentPosition.Size))
+
+	// Only use ReduceOnly in Hedge mode, not in One-way mode
+	// 只在双向持仓模式使用 ReduceOnly，单向模式不使用
+	if e.positionMode == PositionModeHedge {
+		orderService = orderService.ReduceOnly(true)
+	}
+
+	order, err := orderService.Do(ctx)
 
 	if err != nil {
 		return err

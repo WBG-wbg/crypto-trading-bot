@@ -632,7 +632,6 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 		leverageInfo = fmt.Sprintf(`
 **杠杆范围**: %d-%d 倍
 说明：请根据置信度、趋势强度（ADX）、波动性（ATR）在此范围内选择合适的杠杆倍数。
-在最确定的机会上使用较高杠杆，在不太确定的机会上使用较低杠杆。
 `, g.config.BinanceLeverageMin, g.config.BinanceLeverageMax)
 	} else {
 		leverageInfo = fmt.Sprintf(`
