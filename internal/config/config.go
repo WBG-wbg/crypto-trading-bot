@@ -51,10 +51,17 @@ type Config struct {
 	// Trading parameters
 	// 交易参数
 	CryptoSymbols      []string // 交易对列表（支持单个或多个，用逗号分隔）/ Trading pairs list (supports single or multiple, comma-separated)
-	CryptoTimeframe    string
+	CryptoTimeframe    string   // K线数据时间间隔 / K-line data timeframe
+	TradingInterval    string   // 系统运行间隔（独立于K线间隔）/ System execution interval (independent from K-line timeframe)
 	CryptoLookbackDays int
 	// PositionSize removed - now uses LLM's position size recommendation
 	// 移除 PositionSize - 现在使用 LLM 的仓位建议
+
+	// Multi-timeframe analysis
+	// 多时间周期分析
+	EnableMultiTimeframe     bool   // 是否启用多时间周期分析 / Enable multi-timeframe analysis
+	CryptoLongerTimeframe    string // 更长期的时间周期（如 4h）/ Longer timeframe (e.g., 4h)
+	CryptoLongerLookbackDays int    // 更长期时间周期的回看天数 / Lookback days for longer timeframe
 
 	// Analysis options
 	// 分析选项
@@ -138,8 +145,15 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 
 		// Trading parameters
 		CryptoTimeframe:    viper.GetString("CRYPTO_TIMEFRAME"),
+		TradingInterval:    viper.GetString("TRADING_INTERVAL"),
 		CryptoLookbackDays: viper.GetInt("CRYPTO_LOOKBACK_DAYS"),
 		// PositionSize removed - now uses LLM's position size recommendation
+
+		// Multi-timeframe analysis
+		// 多时间周期分析
+		EnableMultiTimeframe:     viper.GetBool("ENABLE_MULTI_TIMEFRAME"),
+		CryptoLongerTimeframe:    viper.GetString("CRYPTO_LONGER_TIMEFRAME"),
+		CryptoLongerLookbackDays: viper.GetInt("CRYPTO_LONGER_LOOKBACK_DAYS"),
 
 		// Analysis options
 		EnableSentimentAnalysis: viper.GetBool("ENABLE_SENTIMENT_ANALYSIS"),
@@ -164,6 +178,22 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 	// 如果未设置回看天数，自动计算
 	if cfg.CryptoLookbackDays == 0 {
 		cfg.CryptoLookbackDays = calculateLookbackDays(cfg.CryptoTimeframe)
+	}
+
+	// Setup multi-timeframe analysis defaults
+	// 设置多时间周期分析默认值
+	if cfg.EnableMultiTimeframe {
+		// Default longer timeframe to 4h if not set
+		// 如果未设置更长期时间周期，默认为 4h
+		if cfg.CryptoLongerTimeframe == "" {
+			cfg.CryptoLongerTimeframe = "4h"
+		}
+
+		// Auto-calculate longer timeframe lookback days if not set
+		// 如果未设置更长期时间周期的回看天数，自动计算
+		if cfg.CryptoLongerLookbackDays == 0 {
+			cfg.CryptoLongerLookbackDays = calculateLookbackDays(cfg.CryptoLongerTimeframe)
+		}
 	}
 
 	// Parse crypto symbols (supports single or multiple, comma-separated)
@@ -215,6 +245,12 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		cfg.BinanceLeverageMin = cfg.BinanceLeverage
 		cfg.BinanceLeverageMax = cfg.BinanceLeverage
 		cfg.BinanceLeverageDynamic = false
+	}
+
+	// Setup TradingInterval default (use CRYPTO_TIMEFRAME if not set)
+	// 设置 TradingInterval 默认值（如果未设置，使用 CRYPTO_TIMEFRAME）
+	if cfg.TradingInterval == "" {
+		cfg.TradingInterval = cfg.CryptoTimeframe
 	}
 
 	return cfg, nil
@@ -278,6 +314,8 @@ func getProjectDir() string {
 // calculateLookbackDays returns optimal lookback days based on timeframe
 func calculateLookbackDays(timeframe string) int {
 	switch timeframe {
+	case "3m":
+		return 3 // ~1440 candles (3 days * 480 candles/day)
 	case "15m":
 		return 5 // ~480 candles
 	case "1h":

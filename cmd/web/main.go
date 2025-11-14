@@ -309,14 +309,15 @@ func main() {
 	}()
 
 	// Initialize scheduler
-	// 初始化调度器
-	tradingScheduler, err := scheduler.NewTradingScheduler(cfg.CryptoTimeframe)
+	// 初始化调度器（使用 TradingInterval 而不是 CryptoTimeframe）
+	// Use TradingInterval instead of CryptoTimeframe for scheduling
+	tradingScheduler, err := scheduler.NewTradingScheduler(cfg.TradingInterval)
 	if err != nil {
 		log.Error(fmt.Sprintf("调度器初始化失败: %v", err))
 		os.Exit(1)
 	}
 
-	log.Success(fmt.Sprintf("调度器已初始化 (时间周期: %s)", cfg.CryptoTimeframe))
+	log.Success(fmt.Sprintf("调度器已初始化 (运行间隔: %s, K线间隔: %s)", cfg.TradingInterval, cfg.CryptoTimeframe))
 	log.Info(fmt.Sprintf("下一次分析时间: %s", tradingScheduler.GetNextTimeframeTime().Format("2006-01-02 15:04:05")))
 	log.Info("")
 	log.Info("按 Ctrl+C 停止程序")

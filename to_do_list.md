@@ -3,6 +3,5 @@
 
 ## 短期
 1. 山寨币设置低杠杆
-2. env.example 配置项优化
-3. 配置 docker-compose 部署
-4. llm 手动平仓后，去除币安的止损单
+2. 配置 docker-compose 部署
+3. llm 手动平仓后，去除币安的止损单(未测试)

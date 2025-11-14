@@ -258,18 +258,48 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 
 				binanceSymbol := g.config.GetBinanceSymbolFor(sym)
 
-				// Fetch OHLCV data
+				// Fetch OHLCV data for primary timeframe
+				// 获取主时间周期的 OHLCV 数据
 				ohlcvData, err := marketData.GetOHLCV(ctx, binanceSymbol, timeframe, lookbackDays)
 				if err != nil {
 					g.logger.Warning(fmt.Sprintf("  ⚠️  %s OHLCV数据获取失败: %v", sym, err))
 					return
 				}
 
-				// Calculate indicators
+				// Calculate indicators for primary timeframe
+				// 计算主时间周期的指标
 				indicators := dataflows.CalculateIndicators(ohlcvData)
 
-				// Generate report
+				// Generate primary timeframe report
+				// 生成主时间周期报告
 				report := dataflows.FormatIndicatorReport(sym, timeframe, ohlcvData, indicators)
+
+				// Multi-timeframe analysis (if enabled)
+				// 多时间周期分析（如果启用）
+				if g.config.EnableMultiTimeframe {
+					g.logger.Info(fmt.Sprintf("  🔄 正在获取 %s 更长期时间周期数据 (%s)...", sym, g.config.CryptoLongerTimeframe))
+
+					// Fetch OHLCV data for longer timeframe
+					// 获取更长期时间周期的 OHLCV 数据
+					longerOHLCV, err := marketData.GetOHLCV(ctx, binanceSymbol, g.config.CryptoLongerTimeframe, g.config.CryptoLongerLookbackDays)
+					if err != nil {
+						g.logger.Warning(fmt.Sprintf("  ⚠️  %s 更长期时间周期数据获取失败: %v", sym, err))
+					} else {
+						// Calculate indicators for longer timeframe
+						// 计算更长期时间周期的指标
+						longerIndicators := dataflows.CalculateIndicators(longerOHLCV)
+
+						// Generate longer timeframe report
+						// 生成更长期时间周期报告
+						longerReport := dataflows.FormatLongerTimeframeReport(sym, g.config.CryptoLongerTimeframe, longerOHLCV, longerIndicators)
+
+						// Append longer timeframe report to main report
+						// 将更长期时间周期报告追加到主报告
+						report += "\n" + longerReport
+
+						g.logger.Success(fmt.Sprintf("  ✅ %s 多时间周期分析完成", sym))
+					}
+				}
 
 				// Save to state (thread-safe)
 				mu.Lock()
@@ -625,13 +655,12 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 	// 从文件加载系统 Prompt 或使用默认值
 	systemPrompt := loadPromptFromFile(g.config.TraderPromptPath, g.logger)
 
-	// Build user prompt with leverage range info
-	// 构建包含杠杆范围信息的用户 Prompt
+	// Build user prompt with leverage range info and K-line interval
+	// 构建包含杠杆范围信息和 K 线间隔的用户 Prompt
 	leverageInfo := ""
 	if g.config.BinanceLeverageDynamic {
 		leverageInfo = fmt.Sprintf(`
-**杠杆范围**: %d-%d 倍
-说明：请根据置信度、趋势强度（ADX）、波动性（ATR）在此范围内选择合适的杠杆倍数。
+**动态杠杆范围**: %d-%d 倍
 `, g.config.BinanceLeverageMin, g.config.BinanceLeverageMax)
 	} else {
 		leverageInfo = fmt.Sprintf(`
@@ -639,11 +668,19 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 `, g.config.BinanceLeverage)
 	}
 
+	// Add K-line interval info
+	// 添加 K 线间隔信息
+	klineInfo := fmt.Sprintf(`
+**K 线数据间隔**: %s（市场报告中的技术指标基于此时间周期计算）
+**系统运行间隔**: %s（系统每隔此时间运行一次分析）
+`, g.config.CryptoTimeframe, g.config.TradingInterval)
+
 	userPrompt := fmt.Sprintf(`请分析以下数据并给出交易决策：
 %s
 %s
+%s
 
-请给出你的分析和最终决策。`, leverageInfo, allReports)
+请给出你的分析和最终决策。`, leverageInfo, klineInfo, allReports)
 
 	// Create messages
 	messages := []*schema.Message{

@@ -37,9 +37,9 @@ type Server struct {
 func NewServer(cfg *config.Config, log *logger.ColorLogger, db *storage.Storage, stopLossMgr *executors.StopLossManager) *Server {
 	h := server.Default(server.WithHostPorts(fmt.Sprintf(":%d", cfg.WebPort)))
 
-	// Initialize scheduler
-	// 初始化调度器
-	sched, _ := scheduler.NewTradingScheduler(cfg.CryptoTimeframe)
+	// Initialize scheduler (use TradingInterval, not CryptoTimeframe)
+	// 初始化调度器（使用 TradingInterval 而不是 CryptoTimeframe）
+	sched, _ := scheduler.NewTradingScheduler(cfg.TradingInterval)
 
 	s := &Server{
 		config:          cfg,
@@ -127,7 +127,8 @@ func (s *Server) handleIndex(ctx context.Context, c *app.RequestContext) {
 
 	data := map[string]interface{}{
 		"Symbols":         s.config.CryptoSymbols,
-		"Timeframe":       s.config.CryptoTimeframe,
+		"KlineTimeframe":  s.config.CryptoTimeframe, // K线数据间隔 / K-line data interval
+		"TradingInterval": s.config.TradingInterval, // 系统运行间隔 / System execution interval
 		"Stats":           stats,
 		"Sessions":        sessions,
 		"Batches":         batches, // ✅ Add batches for batch-based display
@@ -371,9 +372,10 @@ func (s *Server) handleLivePositions(ctx context.Context, c *app.RequestContext)
 // handleSymbols 返回所有配置的交易对
 func (s *Server) handleSymbols(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, utils.H{
-		"symbols":   s.config.CryptoSymbols,
-		"count":     len(s.config.CryptoSymbols),
-		"timeframe": s.config.CryptoTimeframe,
+		"symbols":          s.config.CryptoSymbols,
+		"count":            len(s.config.CryptoSymbols),
+		"kline_timeframe":  s.config.CryptoTimeframe, // K线数据间隔
+		"trading_interval": s.config.TradingInterval, // 系统运行间隔
 	})
 }
 

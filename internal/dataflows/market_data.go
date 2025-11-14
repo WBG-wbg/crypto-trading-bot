@@ -27,7 +27,8 @@ type OHLCV struct {
 
 // TechnicalIndicators holds calculated technical indicators
 type TechnicalIndicators struct {
-	RSI       []float64
+	RSI       []float64 // RSI(14) - 14期相对强弱指数
+	RSI_7     []float64 // RSI(7) - 7期相对强弱指数（短期超买超卖）
 	MACD      []float64
 	Signal    []float64
 	BB_Upper  []float64
@@ -37,8 +38,10 @@ type TechnicalIndicators struct {
 	SMA_50    []float64
 	SMA_200   []float64
 	EMA_12    []float64
+	EMA_20    []float64 // EMA(20) - 20期指数移动平均（常用趋势线）
 	EMA_26    []float64
-	ATR       []float64
+	ATR       []float64 // ATR(14) - 14期平均真实波幅
+	ATR_3     []float64 // ATR(3) - 3期平均真实波幅（短期波动率）
 	Volume    []float64
 
 	// New indicators for trend strength and confirmation
@@ -158,14 +161,17 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 
 	// Calculate indicators
 	rsi := calculateRSI(closes, 14)
+	rsi7 := calculateRSI(closes, 7) // 新增：7期RSI（短期超买超卖判断）
 	macd, signal := calculateMACD(closes)
 	bbUpper, bbMiddle, bbLower := calculateBollingerBands(closes, 20, 2.0)
 	sma20 := calculateSMA(closes, 20)
 	sma50 := calculateSMA(closes, 50)
 	sma200 := calculateSMA(closes, 200)
 	ema12 := calculateEMA(closes, 12)
+	ema20 := calculateEMA(closes, 20) // 新增：20期EMA（常用趋势线）
 	ema26 := calculateEMA(closes, 26)
 	atr := calculateATR(highs, lows, closes, 14)
+	atr3 := calculateATR(highs, lows, closes, 3) // 新增：3期ATR（短期波动率）
 
 	// New indicators for trend strength and volume confirmation
 	// 新增指标：趋势强度和成交量确认
@@ -174,6 +180,7 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 
 	return &TechnicalIndicators{
 		RSI:       rsi,
+		RSI_7:     rsi7, // 新增
 		MACD:      macd,
 		Signal:    signal,
 		BB_Upper:  bbUpper,
@@ -183,8 +190,10 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 		SMA_50:    sma50,
 		SMA_200:   sma200,
 		EMA_12:    ema12,
+		EMA_20:    ema20, // 新增
 		EMA_26:    ema26,
 		ATR:       atr,
+		ATR_3:     atr3, // 新增
 		Volume:    volumes,
 
 		// New indicators
@@ -573,130 +582,91 @@ func FormatOHLCVReport(symbol string, timeframe string, ohlcvData []OHLCV) strin
 }
 
 // FormatIndicatorReport generates a formatted report of technical indicators
+// 生成技术指标的格式化报告（日内数据）
 func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, indicators *TechnicalIndicators) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("## Technical Indicators for %s (timeframe: %s)\n\n", symbol, timeframe))
-
 	if len(ohlcvData) == 0 {
-		sb.WriteString("No data available\n")
+		sb.WriteString("无数据可用 (No data available)\n")
 		return sb.String()
 	}
 
-	// Show latest values
 	lastIdx := len(ohlcvData) - 1
-	latestTime := ohlcvData[lastIdx].Timestamp.Format("2006-01-02 15:04:05")
 	latestPrice := ohlcvData[lastIdx].Close
 
-	sb.WriteString(fmt.Sprintf("Latest data point: %s\n", latestTime))
-	sb.WriteString(fmt.Sprintf("Current price: $%.2f\n\n", latestPrice))
+	// === 标题 ===
+	// === Header ===
+	sb.WriteString(fmt.Sprintf("=== %s Market Report ===\n\n", symbol))
 
-	// RSI
-	if len(indicators.RSI) > lastIdx && !math.IsNaN(indicators.RSI[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("RSI(14): %.2f\n", indicators.RSI[lastIdx]))
+	// === 当前值摘要（单行）===
+	// === Current Values Summary (Single Line) ===
+	currentEMA20 := 0.0
+	if len(indicators.EMA_20) > lastIdx && !math.IsNaN(indicators.EMA_20[lastIdx]) {
+		currentEMA20 = indicators.EMA_20[lastIdx]
+	}
+
+	currentMACD := 0.0
+	if len(indicators.MACD) > lastIdx && !math.IsNaN(indicators.MACD[lastIdx]) {
+		currentMACD = indicators.MACD[lastIdx]
+	}
+
+	currentRSI7 := 0.0
+	if len(indicators.RSI_7) > lastIdx && !math.IsNaN(indicators.RSI_7[lastIdx]) {
+		currentRSI7 = indicators.RSI_7[lastIdx]
+	}
+
+	sb.WriteString(fmt.Sprintf("当前价格 = %.1f, 当前 EMA(20) = %.1f, 当前 MACD = %.1f, 当前 RSI(7) = %.1f\n\n",
+		latestPrice, currentEMA20, currentMACD, currentRSI7))
+
+	// === 日内数据（最近10期）===
+	// === Intraday Data (Last 10 periods) ===
+	sb.WriteString(fmt.Sprintf("日内数据(%s)\n\n", timeframe))
+
+	// Determine series length (up to 10 data points)
+	// 确定序列长度（最多10个数据点）
+	seriesLength := 10
+	startIdx := lastIdx - seriesLength + 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	// Helper function to format float array (last N values)
+	// 辅助函数：格式化浮点数数组（最近 N 个值）
+	formatSeries := func(data []float64, startIdx, endIdx int, decimals int) string {
+		var values []string
+		for i := startIdx; i <= endIdx; i++ {
+			if i >= 0 && i < len(data) && !math.IsNaN(data[i]) {
+				values = append(values, fmt.Sprintf("%.*f", decimals, data[i]))
+			}
+		}
+		return "[" + strings.Join(values, ", ") + "]"
+	}
+
+	// 中间价（收盘价）/ Mid Price (Close Price)
+	var prices []float64
+	for i := startIdx; i <= lastIdx; i++ {
+		prices = append(prices, ohlcvData[i].Close)
+	}
+	sb.WriteString(fmt.Sprintf("中间价: %s\n\n", formatSeries(prices, 0, len(prices)-1, 1)))
+
+	// EMA(20)
+	if len(indicators.EMA_20) > lastIdx {
+		sb.WriteString(fmt.Sprintf("EMA(20): %s\n\n", formatSeries(indicators.EMA_20, startIdx, lastIdx, 1)))
 	}
 
 	// MACD
-	if len(indicators.MACD) > lastIdx && !math.IsNaN(indicators.MACD[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("MACD: %.2f\n", indicators.MACD[lastIdx]))
-	}
-	if len(indicators.Signal) > lastIdx && !math.IsNaN(indicators.Signal[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("MACD Signal: %.2f\n", indicators.Signal[lastIdx]))
+	if len(indicators.MACD) > lastIdx {
+		sb.WriteString(fmt.Sprintf("MACD: %s\n\n", formatSeries(indicators.MACD, startIdx, lastIdx, 1)))
 	}
 
-	// Bollinger Bands
-	if len(indicators.BB_Upper) > lastIdx && !math.IsNaN(indicators.BB_Upper[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("\nBollinger Bands:\n"))
-		sb.WriteString(fmt.Sprintf("  Upper: $%.2f\n", indicators.BB_Upper[lastIdx]))
-		sb.WriteString(fmt.Sprintf("  Middle: $%.2f\n", indicators.BB_Middle[lastIdx]))
-		sb.WriteString(fmt.Sprintf("  Lower: $%.2f\n", indicators.BB_Lower[lastIdx]))
+	// RSI(7)
+	if len(indicators.RSI_7) > lastIdx {
+		sb.WriteString(fmt.Sprintf("RSI(7): %s\n\n", formatSeries(indicators.RSI_7, startIdx, lastIdx, 1)))
 	}
 
-	// Moving Averages
-	sb.WriteString(fmt.Sprintf("\nMoving Averages:\n"))
-	if len(indicators.SMA_20) > lastIdx && !math.IsNaN(indicators.SMA_20[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("  SMA(20): $%.2f\n", indicators.SMA_20[lastIdx]))
-	}
-	if len(indicators.SMA_50) > lastIdx && !math.IsNaN(indicators.SMA_50[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("  SMA(50): $%.2f\n", indicators.SMA_50[lastIdx]))
-	}
-	if len(indicators.SMA_200) > lastIdx && !math.IsNaN(indicators.SMA_200[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("  SMA(200): $%.2f\n", indicators.SMA_200[lastIdx]))
-	}
-	if len(indicators.EMA_12) > lastIdx && !math.IsNaN(indicators.EMA_12[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("  EMA(12): $%.2f\n", indicators.EMA_12[lastIdx]))
-	}
-	if len(indicators.EMA_26) > lastIdx && !math.IsNaN(indicators.EMA_26[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("  EMA(26): $%.2f\n", indicators.EMA_26[lastIdx]))
-	}
-
-	// ATR
-	if len(indicators.ATR) > lastIdx && !math.IsNaN(indicators.ATR[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("\nATR(14): $%.2f\n", indicators.ATR[lastIdx]))
-		atrPercent := (indicators.ATR[lastIdx] / latestPrice) * 100
-		sb.WriteString(fmt.Sprintf("ATR %%: %.2f%%\n", atrPercent))
-	}
-
-	// ADX and Directional Indicators
-	// ADX 和趋向指标
-	if len(indicators.ADX) > lastIdx && !math.IsNaN(indicators.ADX[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("\nTrend Strength (ADX):\n"))
-		sb.WriteString(fmt.Sprintf("  ADX(14): %.2f", indicators.ADX[lastIdx]))
-
-		// Interpret ADX value
-		// 解释 ADX 值
-		adxValue := indicators.ADX[lastIdx]
-		if adxValue < 20 {
-			sb.WriteString(" (No trend - 观望)")
-		} else if adxValue < 25 {
-			sb.WriteString(" (Weak trend - 弱趋势)")
-		} else if adxValue < 50 {
-			sb.WriteString(" (Strong trend - 强趋势 ✓)")
-		} else {
-			sb.WriteString(" (Very strong trend - 极强趋势 ✓✓)")
-		}
-		sb.WriteString("\n")
-
-		if len(indicators.DI_Plus) > lastIdx && !math.IsNaN(indicators.DI_Plus[lastIdx]) {
-			sb.WriteString(fmt.Sprintf("  +DI: %.2f\n", indicators.DI_Plus[lastIdx]))
-		}
-		if len(indicators.DI_Minus) > lastIdx && !math.IsNaN(indicators.DI_Minus[lastIdx]) {
-			sb.WriteString(fmt.Sprintf("  -DI: %.2f\n", indicators.DI_Minus[lastIdx]))
-		}
-
-		// Determine trend direction
-		// 判断趋势方向
-		if len(indicators.DI_Plus) > lastIdx && len(indicators.DI_Minus) > lastIdx &&
-			!math.IsNaN(indicators.DI_Plus[lastIdx]) && !math.IsNaN(indicators.DI_Minus[lastIdx]) {
-			if indicators.DI_Plus[lastIdx] > indicators.DI_Minus[lastIdx] {
-				sb.WriteString("  Direction: Bullish (上升趋势)\n")
-			} else {
-				sb.WriteString("  Direction: Bearish (下降趋势)\n")
-			}
-		}
-	}
-
-	// Volume Analysis
-	// 成交量分析
-	sb.WriteString(fmt.Sprintf("\nVolume Analysis:\n"))
-	sb.WriteString(fmt.Sprintf("  Latest Volume: %.2f\n", ohlcvData[lastIdx].Volume))
-
-	if len(indicators.VolumeRatio) > lastIdx && !math.IsNaN(indicators.VolumeRatio[lastIdx]) {
-		sb.WriteString(fmt.Sprintf("  Volume Ratio: %.2fx", indicators.VolumeRatio[lastIdx]))
-
-		// Interpret volume ratio
-		// 解释成交量比率
-		volumeRatio := indicators.VolumeRatio[lastIdx]
-		if volumeRatio > 2.0 {
-			sb.WriteString(" (异常放量 - Exceptionally high ✓✓)")
-		} else if volumeRatio > 1.5 {
-			sb.WriteString(" (放量 - High volume ✓)")
-		} else if volumeRatio < 0.5 {
-			sb.WriteString(" (缩量 - Low volume)")
-		} else {
-			sb.WriteString(" (正常 - Normal)")
-		}
-		sb.WriteString("\n")
+	// RSI(14)
+	if len(indicators.RSI) > lastIdx {
+		sb.WriteString(fmt.Sprintf("RSI(14): %s\n\n", formatSeries(indicators.RSI, startIdx, lastIdx, 1)))
 	}
 
 	return sb.String()
@@ -903,4 +873,88 @@ func convertTimeframe(tf string) string {
 	default:
 		return "1h"
 	}
+}
+
+// FormatLongerTimeframeReport generates a formatted report for longer timeframe analysis
+// FormatLongerTimeframeReport 生成更长期时间周期分析的格式化报告
+func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OHLCV, indicators *TechnicalIndicators) string {
+	var sb strings.Builder
+
+	if len(ohlcvData) == 0 {
+		sb.WriteString("无数据可用 (No data available)\n")
+		return sb.String()
+	}
+
+	lastIdx := len(ohlcvData) - 1
+
+	// === 长期数据标题 ===
+	// === Long-term Data Header ===
+	sb.WriteString(fmt.Sprintf("长期数据 (%s):\n\n", timeframe))
+
+	// === EMA(20) vs 50-Period EMA ===
+	ema20Val := 0.0
+	sma50Val := 0.0
+	if len(indicators.EMA_20) > lastIdx && !math.IsNaN(indicators.EMA_20[lastIdx]) {
+		ema20Val = indicators.EMA_20[lastIdx]
+	}
+	if len(indicators.SMA_50) > lastIdx && !math.IsNaN(indicators.SMA_50[lastIdx]) {
+		sma50Val = indicators.SMA_50[lastIdx]
+	}
+	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. 50-Period EMA: %.1f\n\n", ema20Val, sma50Val))
+
+	// === ATR(3) vs 14-Period ATR ===
+	atr3Val := 0.0
+	atr14Val := 0.0
+	if len(indicators.ATR_3) > lastIdx && !math.IsNaN(indicators.ATR_3[lastIdx]) {
+		atr3Val = indicators.ATR_3[lastIdx]
+	}
+	if len(indicators.ATR) > lastIdx && !math.IsNaN(indicators.ATR[lastIdx]) {
+		atr14Val = indicators.ATR[lastIdx]
+	}
+	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. 14-Period ATR: %.1f\n\n", atr3Val, atr14Val))
+
+	// === 当前成交量 vs 平均成交量 ===
+	// === Current Volume vs Average Volume ===
+	currentVolume := 0.0
+	avgVolume := 0.0
+	if len(ohlcvData) >= 20 {
+		currentVolume = ohlcvData[lastIdx].Volume
+		for i := lastIdx - 19; i <= lastIdx; i++ {
+			avgVolume += ohlcvData[i].Volume
+		}
+		avgVolume /= 20
+	}
+	sb.WriteString(fmt.Sprintf("当前成交量: %.1f vs. 平均成交量: %.1f\n\n", currentVolume, avgVolume))
+
+	// === MACD 序列（最近10期）===
+	// === MACD Series (Last 10 periods) ===
+	seriesLength := 10
+	startIdx := lastIdx - seriesLength + 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	// Helper function to format float array (last N values)
+	// 辅助函数：格式化浮点数数组（最近 N 个值）
+	formatSeries := func(data []float64, startIdx, endIdx int, decimals int) string {
+		var values []string
+		for i := startIdx; i <= endIdx; i++ {
+			if i >= 0 && i < len(data) && !math.IsNaN(data[i]) {
+				values = append(values, fmt.Sprintf("%.*f", decimals, data[i]))
+			}
+		}
+		return "[" + strings.Join(values, ", ") + "]"
+	}
+
+	if len(indicators.MACD) > lastIdx {
+		sb.WriteString(fmt.Sprintf("MACD: %s\n\n", formatSeries(indicators.MACD, startIdx, lastIdx, 1)))
+	}
+
+	// === RSI(14) 序列（最近10期）===
+	// === RSI(14) Series (Last 10 periods) ===
+	if len(indicators.RSI) > lastIdx {
+		sb.WriteString(fmt.Sprintf("RSI(14): %s\n\n", formatSeries(indicators.RSI, startIdx, lastIdx, 1)))
+	}
+
+	return sb.String()
 }
