@@ -10,25 +10,66 @@ Uses Large Language Models (LLM) to analyze market data, generate trading signal
 
 ![Trading Bot Dashboard](assets/fig1.png)
 
-
 > ⚠️ **Important Notice**: This project has been completely refactored from Python to Go for higher performance and better concurrency.
+
+---
+
+## 💡 Trading Philosophy
+
+This bot follows a **trend-following, highly selective** trading approach:
+
+### Core Principles
+1. **Extreme Selectivity** - Only trade the most certain opportunities, "better to miss than make mistakes"
+2. **High Risk-Reward Ratio** - Target R:R ≥ 2:1, pursue big wins
+3. **Let Winners Run** - Set reasonable initial stop-loss, give trends room to develop
+4. **Patient Waiting** - Wait for high-probability setups, doing the right thing > doing many things
+5. **One Big Win > Ten Small Wins** - Focus on capturing trending moves
+
+### Decision Rules (Absolute Priority)
+
+1. **Capital Utilization Limits** (Used Margin / Total Balance)
+   - < 30%: Normal trading
+   - 30-50%: Only open positions with confidence ≥ 0.88
+   - 50-70%: Only open with confidence ≥ 0.92 AND R:R ≥ 2.5:1
+   - > 70%: No new positions allowed
+
+2. **Confidence Threshold**: ≥ 0.8 to trade, HOLD most of the time
+
+3. **Risk-Reward Requirement**: ≥ 2:1
+
+4. **Fixed Stop-Loss**: Set once at entry, don't adjust
+
+### Decision Framework
+
+**Step 1: Order Book & Funding Rate Analysis (50% weight)**
+- **Order Book**: Bid/Ask volume ratio, large order walls (support/resistance)
+- **Funding Rate**: Positive (longs overheated), Negative (shorts overheated)
+- **24h Volume**: Breakout + high volume = genuine breakout
+
+**Step 2: Traditional Technical Analysis (50% weight)**
+- Only trade in **strong trends** (ADX > 25)
+- Avoid **chasing** (be cautious at RSI extremes)
+- MACD, Bollinger Bands, Moving Averages as **confirmation signals**
+
+---
 
 ## ✨ Core Features
 
 ### 🎯 Intelligent Trading
 - **Multi-Agent Parallel Analysis**: Market Analyst, Crypto Analyst, and Sentiment Analyst working in parallel
-- **LLM-Driven Decisions**: Supports OpenAI API with configurable models
-- **Dynamic Leverage**: Intelligently adjusts leverage (e.g., `10-20x`) based on confidence
+- **LLM-Driven Decisions**: Supports OpenAI-compatible APIs (OpenAI, DeepSeek, etc.)
+- **Dynamic Leverage**: Intelligently adjusts leverage (e.g., `10-20x`) based on confidence, trend strength (ADX), and volatility (ATR)
 - **External Prompt Management**: Adjust trading strategies without recompilation
+- **Separate K-line & Execution Intervals**: Calculate indicators from fine-grained data (e.g., 3m) while making decisions at lower frequency (e.g., 15m)
 
 ### 🛡️ Risk Management
-- **Phased Stop-Loss Strategy**: Fixed Stop → Breakeven Stop → Trailing Stop
-- **Real-time Position Monitoring**: Check and adjust stop-loss every 10 seconds
-- **Partial Take Profit**: Take partial profits at targets, trail remaining position
-- **Configurable Risk Parameters**: Stop-loss triggers, trailing distance, tightening conditions
+- **LLM-Driven Stop-Loss**: LLM analyzes market every 15 minutes and provides intelligent stop-loss recommendations
+- **Server-Side Stop-Loss Orders**: Binance server-side orders execute 24/7, even if local program crashes
+- **Real-time Position Monitoring**: System checks and updates stop-loss in real-time
+- **Breakeven & Trailing Stops**: Automatically move to breakeven at 1:1 profit, trail at 2:1+
 
 ### 📊 Multi-Symbol Support
-- **Parallel Analysis**: Analyze multiple pairs simultaneously (BTC/USDT, ETH/USDT, etc.)
+- **Parallel Analysis**: Analyze multiple pairs simultaneously (BTC/USDT, ETH/USDT, SOL/USDT, etc.)
 - **Intelligent Selection**: LLM evaluates and selects optimal trading opportunities
 - **Independent Position Management**: Each pair has independent stop-loss and risk control
 
@@ -37,11 +78,14 @@ Uses Large Language Models (LLM) to analyze market data, generate trading signal
 - **Position Visualization**: Display all active positions and P&L in real-time
 - **Trade History**: View all analysis sessions and trading decisions
 - **Next Trade Countdown**: Precise countdown timer to the next trade
+- **Dual Timeframe Display**: Shows both K-line interval and execution interval
 
 ### 💾 Data Persistence
 - **SQLite Database**: Store trading sessions, position history, balance snapshots
 - **Query Tool**: CLI tool for quick historical data queries
 - **Balance History Tracking**: Auto-save balance snapshots every 5 minutes
+
+---
 
 ## 🏗️ Tech Stack
 
@@ -53,13 +97,15 @@ Uses Large Language Models (LLM) to analyze market data, generate trading signal
 - **Logging**: [zerolog](https://github.com/rs/zerolog)
 - **Database**: SQLite3
 
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - **Go 1.21 or higher**
-- Binance Futures account (testnet supported)
-- OpenAI API Key (optional, for LLM decisions)
+- Binance Futures account
+- OpenAI-compatible API Key (OpenAI, DeepSeek, etc.)
 
 ### Installation
 
@@ -85,26 +131,72 @@ cp .env.example .env
 2. Edit `.env` file with required parameters:
 
 ```env
-# Binance API (testnet or production)
-BINANCE_API_KEY=your_api_key
-BINANCE_API_SECRET=your_api_secret
-BINANCE_TEST_MODE=true  # ⚠️ Strongly recommended to use test mode first
+# ===================================================================
+# LLM Configuration (OpenAI-compatible API)
+# ===================================================================
+LLM_PROVIDER=openai
+DEEP_THINK_LLM=deepseek-reasoner      # For final trading decisions
+QUICK_THINK_LLM=deepseek-chat         # For data analysis
+LLM_BACKEND_URL=https://api.deepseek.com
+OPENAI_API_KEY=your-api-key-here
 
-# Trading pairs (single or multiple)
-CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT
+# Trading Strategy Prompt
+TRADER_PROMPT_PATH=prompts/trader_optimized.txt
 
-# Timeframe
-CRYPTO_TIMEFRAME=1h
+# ===================================================================
+# Binance Trading Configuration
+# ===================================================================
+BINANCE_API_KEY=your-binance-api-key
+BINANCE_API_SECRET=your-binance-api-secret
 
-# Leverage (fixed or dynamic)
-BINANCE_LEVERAGE=10      # Fixed 10x
-# BINANCE_LEVERAGE=10-20  # Dynamic 10-20x
+# Proxy (optional, for users who cannot access Binance directly)
+# BINANCE_PROXY=http://192.168.0.226:6152
 
-# OpenAI API (optional)
-OPENAI_API_KEY=your_openai_key
+# Dynamic Leverage (RECOMMENDED)
+BINANCE_LEVERAGE=10-20  # LLM chooses leverage in 10-20x range based on confidence
 
-# Auto execution
-AUTO_EXECUTE=false  # Set to true to enable auto trading
+# Position Mode (IMPORTANT: Use one-way mode)
+BINANCE_POSITION_MODE=oneway  # Options: oneway (recommended), hedge, auto
+
+# ===================================================================
+# Trading Parameters
+# ===================================================================
+# Trading Pairs (support multiple pairs)
+CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT
+
+# K-line Data Interval (for calculating technical indicators)
+CRYPTO_TIMEFRAME=3m
+
+# System Execution Interval (how often to run analysis)
+TRADING_INTERVAL=15m
+
+# ⭐ BEST PRACTICE:
+#   - Fine-grained K-line (3m) + Low-frequency decisions (15m)
+#   - More precise technical indicators while avoiding overtrading
+#   - Example: CRYPTO_TIMEFRAME=3m, TRADING_INTERVAL=15m
+
+# ===================================================================
+# Multi-Timeframe Analysis (RECOMMENDED)
+# ===================================================================
+ENABLE_MULTI_TIMEFRAME=true
+CRYPTO_LONGER_TIMEFRAME=4h  # Use 4h data for trend context
+
+# ===================================================================
+# Risk Management
+# ===================================================================
+ENABLE_STOPLOSS=true  # Enable LLM-driven stop-loss management
+
+# Sentiment Analysis (NOT RECOMMENDED - high latency, low value)
+ENABLE_SENTIMENT_ANALYSIS=false
+
+# ===================================================================
+# Execution Mode (IMPORTANT)
+# ===================================================================
+# ⚠️ WARNING: Start with false, test thoroughly before setting to true
+AUTO_EXECUTE=false  # Set to true to enable automatic trading
+
+# Web Monitoring
+WEB_PORT=8080
 ```
 
 ### Running
@@ -117,29 +209,66 @@ make run
 make run-web
 
 # Query historical data
-make query ARGS="stats"           # View statistics
-make query ARGS="latest 10"       # Last 10 sessions
-make query ARGS="symbol BTC/USDT 5"  # Specific symbol
+make query ARGS="stats"                 # View statistics
+make query ARGS="latest 10"             # Last 10 sessions
+make query ARGS="symbol BTC/USDT 5"     # Specific symbol
 ```
 
-Web interface default address: `http://localhost:8080` (configurable in `.env`)
+Web interface default address: `http://localhost:8080`
 
-## 📖 Usage
+---
 
-### 1. Test Mode (Recommended for Beginners)
+## 📖 Usage Guide
 
-```bash
-# Set in .env
-BINANCE_TEST_MODE=true
+### 1. Recommended Workflow for Beginners
+
+**Step 1: Test with AUTO_EXECUTE=false**
+```env
+AUTO_EXECUTE=false
+BINANCE_POSITION_MODE=oneway
+```
+Run `make run-web` and observe LLM decisions for 1-2 days
+
+**Step 2: Enable Auto-Execution**
+```env
 AUTO_EXECUTE=true
-
-# Run web mode to observe
-make run-web
 ```
+Monitor closely, ready to stop the system if needed
 
-### 2. Custom Trading Strategy
+**Step 3: Optimize Strategy**
+- Adjust leverage range based on results
+- Fine-tune trading prompts in `prompts/trader_optimized.txt`
+- Monitor balance chart and position performance
 
-Edit `prompts/trader_system.txt` to modify trading strategy without recompilation:
+### 2. Understanding Timeframe Configuration
+
+**Scenario 1: Standard Mode** (K-line interval = Execution interval)
+```env
+CRYPTO_TIMEFRAME=15m
+TRADING_INTERVAL=15m  # (or omit, defaults to CRYPTO_TIMEFRAME)
+```
+Result: Fetch 15m candles every 15 minutes
+
+**Scenario 2: Fine-grained K-line + Low-frequency Decisions** (⭐ RECOMMENDED)
+```env
+CRYPTO_TIMEFRAME=3m      # Calculate indicators from 3m candles
+TRADING_INTERVAL=15m     # Make decisions every 15 minutes
+```
+Benefits:
+- More precise technical indicators (EMA, MACD, RSI based on 3m data)
+- Avoid overtrading (only decide every 15 minutes)
+- Best of both worlds: precision + patience
+
+**Scenario 3: NOT RECOMMENDED** (K-line interval > Execution interval)
+```env
+CRYPTO_TIMEFRAME=1h
+TRADING_INTERVAL=15m
+```
+Issue: Run every 15 min but 1h candles don't update, wasting API calls
+
+### 3. Custom Trading Strategy
+
+Edit `prompts/trader_optimized.txt` to modify trading strategy without recompilation:
 
 ```bash
 # Use different prompt file
@@ -147,19 +276,21 @@ TRADER_PROMPT_PATH=prompts/trader_aggressive.txt
 ```
 
 Available strategy templates:
-- `trader_system.txt` - Trend trading, highly selective (recommended)
+- `trader_optimized.txt` - Trend trading, highly selective (recommended)
+- `trader_system.txt` - Trend trading, balanced approach
 - `trader_aggressive.txt` - Scalping, actively captures opportunities
 
-### 3. Multi-Symbol Configuration
+### 4. Multi-Symbol Configuration
 
 ```bash
 # Monitor multiple pairs simultaneously
-CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,BNB/USDT
+CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT
 
 # System analyzes in parallel and selects best opportunities
+# Recommendation: Don't exceed 3 pairs to avoid over-diversification
 ```
 
-### 4. Real-time Data Access
+### 5. Real-time Data Access
 
 ```bash
 # Web API endpoints
@@ -167,6 +298,8 @@ curl http://localhost:8080/api/balance/current    # Real-time balance
 curl http://localhost:8080/api/balance/history    # Balance history
 curl http://localhost:8080/api/positions          # Current positions
 ```
+
+---
 
 ## 📁 Project Structure
 
@@ -189,9 +322,11 @@ crypto-trading-bot/
 ├── prompts/              # External prompt files
 ├── data/                 # SQLite database files
 ├── .env.example          # Configuration template
-├── Makefile             # Build scripts
+├── Makefile              # Build scripts
 └── README.md
 ```
+
+---
 
 ## 🏗️ Architecture
 
@@ -209,12 +344,35 @@ Market Analyst → Crypto Analyst → Position Info
                             END
 ```
 
-### Stop-Loss Management Phases
+### Market Report Format
 
+**Intraday Report** (based on CRYPTO_TIMEFRAME, e.g., 3m):
 ```
-Open → Fixed Stop → Breakeven Stop → Trailing Stop → Close
-      (Initial)   (Profit > 1R)     (Profit > 2R)
+=== BTC Market Report ===
+
+Current Price = 95123.4, Current EMA(20) = 94567.2, Current MACD = 234.5, Current RSI(7) = 65.3
+
+Intraday Data (3m)
+
+Mid Price: [95100.0, 95150.0, 95200.0, ..., 95123.4]
+EMA(20): [94500.0, 94520.0, 94540.0, ..., 94567.2]
+MACD: [220.0, 225.0, 230.0, ..., 234.5]
+RSI(7): [60.0, 62.0, 64.0, ..., 65.3]
+RSI(14): [55.0, 56.0, 58.0, ..., 60.5]
 ```
+
+**Long-term Report** (CRYPTO_LONGER_TIMEFRAME, e.g., 4h):
+```
+Long-term Data (4h):
+
+EMA(20): 94567.2 vs. 50-Period EMA: 93500.0
+ATR(3): 450.0 vs. 14-Period ATR: 520.0
+Current Volume: 1250000.0 vs. Average Volume: 1100000.0
+MACD: [200.0, 210.0, 220.0, ..., 234.5]
+RSI(14): [55.0, 56.0, 58.0, ..., 60.5]
+```
+
+---
 
 ## ⚙️ Common Commands
 
@@ -232,25 +390,31 @@ make run          # Single execution
 make run-web      # Web monitoring mode
 
 # Query
-make query ARGS="stats"              # Statistics
-make query ARGS="latest 5"           # Last 5 sessions
-make query ARGS="symbol BTC/USDT 3"  # Specific symbol
+make query ARGS="stats"                 # Statistics
+make query ARGS="latest 5"              # Last 5 sessions
+make query ARGS="symbol BTC/USDT 3"     # Specific symbol
 ```
+
+---
 
 ## ⚠️ Security Warnings
 
 **Important Reminders**:
 
-1. **Use Test Mode First**: `BINANCE_TEST_MODE=true` - Thoroughly test before live trading
-2. **Start Small**: Begin with minimum `POSITION_SIZE`
-3. **Set Stop-Loss**: Ensure stop-loss strategy is properly configured
+1. **Test Mode First**: Start with `AUTO_EXECUTE=false`, observe for 1-2 days
+2. **Start Small**: Begin with minimum position sizes and conservative leverage
+3. **Use One-Way Mode**: `BINANCE_POSITION_MODE=oneway` (hedge mode has bugs)
 4. **Monitor Operations**: Regularly check web interface and logs
 5. **API Security**:
    - Use IP whitelist to restrict API access
    - Never share your API keys
-   - Grant only necessary permissions (futures trading, not spot)
+   - Grant only necessary permissions (futures trading only)
+6. **Dynamic Leverage**: Use `10-20` range, LLM will choose based on confidence
+7. **Stop-Loss Always On**: Keep `ENABLE_STOPLOSS=true` at all times
 
 **Risk Disclaimer**: Cryptocurrency trading carries high risk and may result in capital loss. This software is for educational and research purposes only. Users assume all risks.
+
+---
 
 ## 🐛 Troubleshooting
 
@@ -260,13 +424,12 @@ make query ARGS="symbol BTC/USDT 3"  # Specific symbol
    - Ensure the program has been running for at least 5-10 minutes
    - Check database: `sqlite3 data/trading.db "SELECT COUNT(*) FROM balance_history;"`
 
-2. **Market Sentiment Fetch Failed**
-   - Check network connection
-   - Look for `⚠️ Market sentiment data fetch failed` in logs
-   - Sentiment data failure doesn't affect trading decisions
+2. **Next Trade Time Incorrect**
+   - Verify `TRADING_INTERVAL` is set correctly in `.env`
+   - Web page now shows both "K-line Interval" and "Execution Interval"
 
 3. **Position Display Issues**
-   - Confirm `BINANCE_POSITION_MODE` is configured correctly
+   - Confirm `BINANCE_POSITION_MODE=oneway` (recommended)
    - Check actual position mode in Binance account
 
 4. **Compilation Errors**
@@ -274,11 +437,16 @@ make query ARGS="symbol BTC/USDT 3"  # Specific symbol
    - Run `make deps` to update dependencies
    - Clean and rebuild: `make clean && make build-all`
 
+---
+
 ## 📚 More Documentation
 
 - [CLAUDE.md](CLAUDE.md) - Detailed project guide and architecture
 - [prompts/README.md](prompts/README.md) - Prompt management and strategy configuration
 - [.env.example](.env.example) - Complete configuration parameters
+- [docs/STOP_LOSS_GUIDE.md](docs/STOP_LOSS_GUIDE.md) - Stop-loss management guide
+
+---
 
 ## 🔄 Migration from Python Version
 
@@ -296,9 +464,13 @@ This project was completely rewritten from Python to Go:
 - Faster startup time
 - Better type safety
 
+---
+
 ## 🤝 Contributing
 
 Issues and Pull Requests are welcome!
+
+---
 
 ## 📄 License
 

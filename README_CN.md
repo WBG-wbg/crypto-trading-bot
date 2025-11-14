@@ -10,25 +10,66 @@
 
 ![Trading Bot Dashboard](assets/fig1.png)
 
-
 > ⚠️ **重要提示**：此项目从 Python 完全重构为 Go 版本，性能更高、并发能力更强。
+
+---
+
+## 💡 交易哲学
+
+本交易机器人遵循**趋势交易、极度选择性**的交易理念：
+
+### 核心原则
+1. **极度选择性** - 只交易最确定的机会，宁可错过不可做错
+2. **高盈亏比** - 目标盈亏比 ≥ 2:1，追求大赢
+3. **让盈利奔跑** - 设定合理初始止损后，给趋势延续足够空间
+4. **耐心等待** - 等待高概率机会，做对的事比做很多事重要
+5. **一次大赢胜过十次小赢** - 专注捕捉趋势性大行情
+
+### 决策铁律（绝对优先级）
+
+1. **资金使用率限制**（已用保证金/总余额）
+   - < 30%: 正常交易
+   - 30-50%: 置信度 ≥ 0.88 才开仓
+   - 50-70%: 置信度 ≥ 0.92 且盈亏比 ≥ 2.5:1 才开仓
+   - > 70%: 禁止开新仓
+
+2. **置信度门槛**: ≥ 0.8 才交易，大部分时候应 HOLD
+
+3. **盈亏比要求**: ≥ 2:1
+
+4. **固定止损**: 开仓时设定一次，之后不调整
+
+### 决策框架
+
+**第一步：订单簿和资金费率分析（权重 50%）**
+- **订单簿分析**：买卖盘量比、大单堆积位置（支撑/阻力位）
+- **资金费率**：正费率（多头过热），负费率（空头过热）
+- **24h 交易量**：突破伴随放量 = 真突破
+
+**第二步：传统技术分析（权重 50%）**
+- 只在**强趋势**中交易（ADX > 25）
+- 避免**追涨杀跌**（RSI 极端时谨慎）
+- MACD、布林带、移动平均线等作为**确认信号**
+
+---
 
 ## ✨ 核心特性
 
 ### 🎯 智能交易
 - **多智能体并行分析**：市场分析师、加密货币分析师、情绪分析师并行工作
-- **LLM 驱动决策**：支持 OpenAI API，可配置不同模型
-- **动态杠杆**：根据置信度智能调整杠杆倍数（如 `10-20x`）
+- **LLM 驱动决策**：支持 OpenAI 兼容 API（OpenAI、DeepSeek 等）
+- **动态杠杆**：根据置信度、趋势强度（ADX）、波动性（ATR）智能调整杠杆（如 `10-20x`）
 - **外部 Prompt 管理**：无需重新编译即可调整交易策略
+- **K线间隔与运行间隔分离**：基于精细数据（如 3m）计算指标，但以较低频率（如 15m）做决策
 
 ### 🛡️ 风险管理
-- **阶段性止损策略**：固定止损 → 保本止损 → 追踪止损
-- **实时持仓监控**：每 10 秒检查并自动调整止损位
-- **分批止盈**：达到目标后部分获利了结，剩余仓位追踪止损
-- **风险参数可配置**：止损触发点、追踪距离、收紧条件等
+- **LLM 驱动止损**：LLM 每 15 分钟分析市场并提供智能止损建议
+- **服务器端止损单**：币安服务器端止损单 24/7 执行，即使本地程序崩溃也能止损
+- **实时持仓监控**：系统实时检查并更新止损位
+- **保本与追踪止损**：盈利 1:1 时自动移至保本，盈利 2:1+ 时追踪止损
 
 ### 📊 多交易对支持
-- **并行分析**：同时分析多个交易对（BTC/USDT、ETH/USDT 等）
+- **并行分析**：同时分析多个交易对（BTC/USDT、ETH/USDT、SOL/USDT 等）
 - **智能选择**：LLM 综合评估后选择最优交易机会
 - **独立持仓管理**：每个交易对独立止损和风险控制
 
@@ -37,11 +78,14 @@
 - **持仓可视化**：实时显示所有活跃持仓和盈亏
 - **交易历史**：查看所有分析会话和决策记录
 - **下次交易倒计时**：精确到秒的实时倒计时
+- **双时间周期显示**：同时显示 K 线间隔和运行间隔
 
 ### 💾 数据持久化
 - **SQLite 数据库**：存储交易会话、持仓历史、余额快照
 - **查询工具**：命令行工具快速查询历史数据
 - **余额历史追踪**：每 5 分钟自动保存余额快照
+
+---
 
 ## 🏗️ 技术栈
 
@@ -53,13 +97,15 @@
 - **日志**：[zerolog](https://github.com/rs/zerolog)
 - **数据库**：SQLite3
 
+---
+
 ## 🚀 快速开始
 
 ### 前置要求
 
 - **Go 1.21 或更高版本**
-- 币安期货账户（支持测试网）
-- OpenAI API Key（可选，用于 LLM 决策）
+- 币安期货账户
+- OpenAI 兼容 API Key（OpenAI、DeepSeek 等）
 
 ### 安装
 
@@ -85,26 +131,72 @@ cp .env.example .env
 2. 编辑 `.env` 文件，配置必要参数：
 
 ```env
-# 币安 API（测试网或实盘）
-BINANCE_API_KEY=your_api_key
-BINANCE_API_SECRET=your_api_secret
-BINANCE_TEST_MODE=true  # ⚠️ 强烈建议先使用测试模式
+# ===================================================================
+# LLM 配置（OpenAI 兼容 API）
+# ===================================================================
+LLM_PROVIDER=openai
+DEEP_THINK_LLM=deepseek-reasoner      # 用于最终交易决策
+QUICK_THINK_LLM=deepseek-chat         # 用于数据分析
+LLM_BACKEND_URL=https://api.deepseek.com
+OPENAI_API_KEY=你的-api-key
 
-# 交易对（支持单个或多个）
+# 交易策略 Prompt
+TRADER_PROMPT_PATH=prompts/trader_optimized.txt
+
+# ===================================================================
+# 币安交易配置
+# ===================================================================
+BINANCE_API_KEY=你的币安API密钥
+BINANCE_API_SECRET=你的币安API密钥
+
+# 代理（可选，无法直接访问币安的用户需要）
+# BINANCE_PROXY=http://192.168.0.226:6152
+
+# 动态杠杆（推荐）
+BINANCE_LEVERAGE=10-20  # LLM 根据置信度在 10-20 倍范围内选择
+
+# 持仓模式（重要：使用单向持仓模式）
+BINANCE_POSITION_MODE=oneway  # 选项：oneway（推荐）、hedge、auto
+
+# ===================================================================
+# 交易参数
+# ===================================================================
+# 交易对（支持多个）
 CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT
 
-# 时间周期
-CRYPTO_TIMEFRAME=15m
+# K 线数据间隔（用于计算技术指标）
+CRYPTO_TIMEFRAME=3m
 
-# 杠杆（支持固定或动态）
-#BINANCE_LEVERAGE=10      # 固定 10 倍
-BINANCE_LEVERAGE=10-20  # 动态 10-20 倍(强烈建议)
+# 系统运行间隔（多久运行一次分析）
+TRADING_INTERVAL=15m
 
-# OpenAI API（可选）
-OPENAI_API_KEY=your_openai_key
+# ⭐ 最佳实践：
+#   - 精细 K 线（3m）+ 低频决策（15m）
+#   - 更精确的技术指标，同时避免过度交易
+#   - 示例：CRYPTO_TIMEFRAME=3m, TRADING_INTERVAL=15m
 
-# 自动执行
-AUTO_EXECUTE=true  # 设置为 true 启用自动交易(！！！先设置为 false，测试过再改为 true)
+# ===================================================================
+# 多时间周期分析（推荐）
+# ===================================================================
+ENABLE_MULTI_TIMEFRAME=true
+CRYPTO_LONGER_TIMEFRAME=4h  # 使用 4h 数据提供趋势背景
+
+# ===================================================================
+# 风险管理
+# ===================================================================
+ENABLE_STOPLOSS=true  # 启用 LLM 驱动的止损管理
+
+# 情绪分析（不推荐 - 延迟大、价值低）
+ENABLE_SENTIMENT_ANALYSIS=false
+
+# ===================================================================
+# 执行模式（重要）
+# ===================================================================
+# ⚠️ 警告：先设置为 false，充分测试后再设置为 true
+AUTO_EXECUTE=false  # 设置为 true 启用自动交易
+
+# Web 监控
+WEB_PORT=8080
 ```
 
 ### 运行
@@ -117,29 +209,66 @@ make run
 make run-web
 
 # 查询历史数据
-make query ARGS="stats"           # 查看统计信息
-make query ARGS="latest 10"       # 最近 10 次会话
-make query ARGS="symbol BTC/USDT 5"  # 特定交易对
+make query ARGS="stats"                 # 查看统计信息
+make query ARGS="latest 10"             # 最近 10 次会话
+make query ARGS="symbol BTC/USDT 5"     # 特定交易对
 ```
 
-Web 界面默认地址：`http://localhost:8080`（端口可在 `.env` 中配置）
+Web 界面默认地址：`http://localhost:8080`
 
-## 📖 使用方法
+---
 
-### 1. 测试模式运行（推荐新手）
+## 📖 使用指南
 
-```bash
-# .env 中设置
-BINANCE_TEST_MODE=true
+### 1. 新手推荐流程
+
+**第一步：使用 AUTO_EXECUTE=false 测试**
+```env
+AUTO_EXECUTE=false
+BINANCE_POSITION_MODE=oneway
+```
+运行 `make run-web`，观察 LLM 决策 1-2 天
+
+**第二步：启用自动执行**
+```env
 AUTO_EXECUTE=true
-
-# 运行 Web 模式观察
-make run-web
 ```
+密切监控，随时准备停止系统
 
-### 2. 自定义交易策略
+**第三步：优化策略**
+- 根据结果调整杠杆范围
+- 在 `prompts/trader_optimized.txt` 中微调交易 Prompt
+- 监控余额曲线和持仓表现
 
-编辑 `prompts/trader_system.txt` 修改交易策略，无需重新编译：
+### 2. 理解时间周期配置
+
+**场景 1：标准模式**（K 线间隔 = 运行间隔）
+```env
+CRYPTO_TIMEFRAME=15m
+TRADING_INTERVAL=15m  # （或省略，默认使用 CRYPTO_TIMEFRAME）
+```
+结果：每 15 分钟获取 15 分钟 K 线数据
+
+**场景 2：精细 K 线 + 低频决策**（⭐ 推荐）
+```env
+CRYPTO_TIMEFRAME=3m      # 基于 3 分钟 K 线计算指标
+TRADING_INTERVAL=15m     # 每 15 分钟做一次决策
+```
+好处：
+- 更精确的技术指标（EMA、MACD、RSI 基于 3m 数据）
+- 避免过度交易（仅每 15 分钟决策一次）
+- 兼得精确性与耐心
+
+**场景 3：不推荐**（K 线间隔 > 运行间隔）
+```env
+CRYPTO_TIMEFRAME=1h
+TRADING_INTERVAL=15m
+```
+问题：每 15 分钟运行但 1 小时 K 线未更新，浪费 API 调用
+
+### 3. 自定义交易策略
+
+编辑 `prompts/trader_optimized.txt` 修改交易策略，无需重新编译：
 
 ```bash
 # 使用不同的 Prompt 文件
@@ -147,19 +276,21 @@ TRADER_PROMPT_PATH=prompts/trader_aggressive.txt
 ```
 
 提供的策略模板：
-- `trader_system.txt` - 趋势交易，极度选择性（推荐）
+- `trader_optimized.txt` - 趋势交易，极度选择性（推荐）
+- `trader_system.txt` - 趋势交易，平衡方法
 - `trader_aggressive.txt` - 短线交易，积极捕捉机会
 
-### 3. 多交易对配置
+### 4. 多交易对配置
 
 ```bash
 # 同时监控多个交易对
-CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,BNB/USDT
+CRYPTO_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT
 
 # 系统会并行分析，选择最优机会
+# 建议：不要超过 3 个交易对，避免过度分散
 ```
 
-### 4. 查看实时数据
+### 5. 查看实时数据
 
 ```bash
 # Web API 端点
@@ -167,6 +298,8 @@ curl http://localhost:8080/api/balance/current    # 实时余额
 curl http://localhost:8080/api/balance/history    # 余额历史
 curl http://localhost:8080/api/positions          # 当前持仓
 ```
+
+---
 
 ## 📁 项目结构
 
@@ -189,10 +322,11 @@ crypto-trading-bot/
 ├── prompts/              # 外部 Prompt 文件
 ├── data/                 # SQLite 数据库文件
 ├── .env.example          # 配置文件模板
-├── Makefile             # 构建脚本
+├── Makefile              # 构建脚本
 └── README.md
-
 ```
+
+---
 
 ## 🏗️ 架构说明
 
@@ -210,6 +344,36 @@ START → [市场分析师, 情绪分析师]（并行）
                             END
 ```
 
+### 市场报告格式
+
+**日内报告**（基于 CRYPTO_TIMEFRAME，例如 3m）:
+```
+=== BTC Market Report ===
+
+当前价格 = 95123.4, 当前 EMA(20) = 94567.2, 当前 MACD = 234.5, 当前 RSI(7) = 65.3
+
+日内数据(3m)
+
+中间价: [95100.0, 95150.0, 95200.0, ..., 95123.4]
+EMA(20): [94500.0, 94520.0, 94540.0, ..., 94567.2]
+MACD: [220.0, 225.0, 230.0, ..., 234.5]
+RSI(7): [60.0, 62.0, 64.0, ..., 65.3]
+RSI(14): [55.0, 56.0, 58.0, ..., 60.5]
+```
+
+**长期报告**（CRYPTO_LONGER_TIMEFRAME，例如 4h）:
+```
+长期数据 (4h):
+
+EMA(20): 94567.2 vs. 50-Period EMA: 93500.0
+ATR(3): 450.0 vs. 14-Period ATR: 520.0
+当前成交量: 1250000.0 vs. 平均成交量: 1100000.0
+MACD: [200.0, 210.0, 220.0, ..., 234.5]
+RSI(14): [55.0, 56.0, 58.0, ..., 60.5]
+```
+
+---
+
 ## ⚙️ 常用命令
 
 ```bash
@@ -226,25 +390,31 @@ make run          # 单次执行
 make run-web      # Web 监控模式
 
 # 查询
-make query ARGS="stats"              # 统计信息
-make query ARGS="latest 5"           # 最近 5 次
-make query ARGS="symbol BTC/USDT 3"  # 特定交易对
+make query ARGS="stats"                 # 统计信息
+make query ARGS="latest 5"              # 最近 5 次
+make query ARGS="symbol BTC/USDT 3"     # 特定交易对
 ```
+
+---
 
 ## ⚠️ 安全警告
 
 **重要提示**：
 
-1. **先使用测试模式**：`BINANCE_TEST_MODE=true` 充分测试后再考虑实盘
-2. **小仓位开始**：从最小的 `POSITION_SIZE` 开始
-3. **设置止损**：确保止损策略已正确配置
+1. **先测试模式**：先设置 `AUTO_EXECUTE=false`，观察 1-2 天
+2. **小仓位开始**：从最小仓位和保守杠杆开始
+3. **使用单向持仓**：`BINANCE_POSITION_MODE=oneway`（双向持仓模式有 bug）
 4. **监控运行**：定期查看 Web 界面和日志
 5. **API 安全**：
    - 使用 IP 白名单限制 API 访问
    - 永远不要分享你的 API 密钥
-   - 只授予必要的权限（期货交易，不要现货）
+   - 只授予必要的权限（仅期货交易）
+6. **动态杠杆**：使用 `10-20` 范围，LLM 根据置信度选择
+7. **始终开启止损**：保持 `ENABLE_STOPLOSS=true`
 
 **风险声明**：加密货币交易存在高风险，可能导致资金损失。本软件仅供学习和研究使用，使用者需自行承担所有风险。
+
+---
 
 ## 🐛 故障排除
 
@@ -254,13 +424,12 @@ make query ARGS="symbol BTC/USDT 3"  # 特定交易对
    - 确保程序已运行至少 5-10 分钟
    - 检查数据库：`sqlite3 data/trading.db "SELECT COUNT(*) FROM balance_history;"`
 
-2. **市场情绪获取失败**
-   - 检查网络连接
-   - 查看日志中的 `⚠️ 市场情绪数据获取失败` 提示
-   - 情绪数据失败不影响交易决策
+2. **下次交易时间不正确**
+   - 检查 `.env` 中的 `TRADING_INTERVAL` 是否正确设置
+   - Web 页面现在会同时显示"K 线间隔"和"运行间隔"
 
 3. **持仓显示异常**
-   - 确认 `BINANCE_POSITION_MODE` 配置正确
+   - 确认 `BINANCE_POSITION_MODE=oneway`（推荐）
    - 检查币安账户实际持仓模式
 
 4. **编译错误**
@@ -268,11 +437,16 @@ make query ARGS="symbol BTC/USDT 3"  # 特定交易对
    - 运行 `make deps` 更新依赖
    - 清理后重新编译：`make clean && make build-all`
 
+---
+
 ## 📚 更多文档
 
 - [CLAUDE.md](CLAUDE.md) - 详细的项目指南和架构说明
 - [prompts/README.md](prompts/README.md) - Prompt 管理和策略配置
 - [.env.example](.env.example) - 完整的配置参数说明
+- [docs/STOP_LOSS_GUIDE.md](docs/STOP_LOSS_GUIDE.md) - 止损管理指南
+
+---
 
 ## 🔄 从 Python 版本迁移
 
@@ -290,9 +464,13 @@ make query ARGS="symbol BTC/USDT 3"  # 特定交易对
 - 更快的启动速度
 - 更好的类型安全
 
+---
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
+
+---
 
 ## 📄 许可证
 
