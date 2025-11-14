@@ -126,11 +126,6 @@ func main() {
 	testResponse, err := chatModel.Generate(ctx, testMessages)
 	if err != nil {
 		log.Error(fmt.Sprintf("❌ LLM 服务测试失败: %v", err))
-		log.Error("可能的原因：")
-		log.Error("  1. API Key 无效或已过期")
-		log.Error("  2. API 地址无法访问")
-		log.Error("  3. 模型名称不存在")
-		log.Error("  4. 网络连接问题")
 		log.Error(fmt.Sprintf("请检查配置: API=%s, Model=%s", cfg.BackendURL, cfg.QuickThinkLLM))
 		os.Exit(1)
 	}
@@ -151,10 +146,42 @@ func main() {
 		log.Success(fmt.Sprintf("✅ %s 交易所设置完成", symbol))
 	}
 
+	// Check margin type and warn if using isolated margin with dynamic leverage
+	// 检查保证金类型，如果在逐仓模式下使用动态杠杆则发出警告
+	if cfg.BinanceLeverageDynamic && len(cfg.CryptoSymbols) > 0 {
+		log.Subheader("保证金模式检查", '─', 80)
+		firstSymbol := cfg.CryptoSymbols[0]
+		marginType, err := executor.DetectMarginType(ctx, firstSymbol)
+		if err != nil {
+			log.Warning(fmt.Sprintf("⚠️  无法检测保证金类型: %v", err))
+		} else {
+			if marginType == "isolated" {
+				log.Warning("⚠️  检测到【逐仓模式】+ 动态杠杆配置")
+				log.Warning("")
+				log.Warning(fmt.Sprintf("   配置: BINANCE_LEVERAGE=%d-%d （动态杠杆）",
+					cfg.BinanceLeverageMin, cfg.BinanceLeverageMax))
+				log.Warning("   模式: 逐仓模式（Isolated Margin）")
+				log.Warning("")
+				log.Warning("   ⚠️  重要提示：")
+				log.Warning("   • 逐仓模式下，有持仓时不允许降低杠杆（-4161 错误）")
+				log.Warning("   • 如果 LLM 动态选择的杠杆低于当前持仓杠杆，将跳过杠杆调整")
+				log.Warning("   • 这可能导致实际杠杆与 LLM 选择的杠杆不一致")
+				log.Warning("")
+				log.Warning("   💡 建议：")
+				log.Warning("   1. 切换到全仓模式（Binance 网页 → 合约 → 设置 → 保证金模式 → 全仓）")
+				log.Warning("   2. 或使用固定杠杆（例如 BINANCE_LEVERAGE=10）")
+				log.Warning("")
+			} else {
+				log.Success(fmt.Sprintf("✅ 保证金模式: 全仓模式（Cross Margin） - 支持动态杠杆 %d-%d",
+					cfg.BinanceLeverageMin, cfg.BinanceLeverageMax))
+			}
+		}
+	}
+
 	// Initialize stop-loss manager
 	// 初始化止损管理器
 	log.Subheader("初始化止损管理器", '─', 80)
-	globalStopLossManager = executors.NewStopLossManager(cfg, executor, log)
+	globalStopLossManager = executors.NewStopLossManager(cfg, executor, log, db)
 
 	// Load existing active positions from database
 	// 从数据库加载现有活跃持仓
@@ -561,6 +588,25 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 
 			if result.Success {
 				executionResults[symbol] = fmt.Sprintf("✅ 成功执行 %s", result.Action)
+
+				// Handle closing positions: cancel stop-loss and update database
+				// 处理平仓：取消止损单并更新数据库
+				if symbolDecision.Action == executors.ActionCloseLong || symbolDecision.Action == executors.ActionCloseShort {
+					// Get close price and calculate realized PnL
+					// 获取平仓价格并计算已实现盈亏
+					closePrice := result.Price
+					realizedPnL := 0.0
+					if currentPosition != nil {
+						realizedPnL = currentPosition.UnrealizedPnL
+					}
+
+					// Close position completely (cancel stop-loss, remove from memory, update database)
+					// 完整关闭持仓（取消止损单、从内存移除、更新数据库）
+					closeReason := fmt.Sprintf("LLM决策平仓: %s", symbolDecision.Reason)
+					if err := globalStopLossManager.ClosePosition(ctx, symbol, closePrice, closeReason, realizedPnL); err != nil {
+						log.Warning(fmt.Sprintf("⚠️  关闭 %s 持仓失败: %v", symbol, err))
+					}
+				}
 
 				// Register position for stop-loss management (only for opening positions)
 				// 注册持仓到止损管理器（仅开仓时）

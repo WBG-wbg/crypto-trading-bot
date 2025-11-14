@@ -9,6 +9,7 @@ import (
 	"github.com/adshao/go-binance/v2/futures"
 	"github.com/oak/crypto-trading-bot/internal/config"
 	"github.com/oak/crypto-trading-bot/internal/logger"
+	"github.com/oak/crypto-trading-bot/internal/storage"
 )
 
 // StopLossManager manages stop-loss for all active positions
@@ -42,6 +43,7 @@ type StopLossManager struct {
 	executor  *BinanceExecutor     // 执行器 / Executor
 	config    *config.Config       // 配置 / Config
 	logger    *logger.ColorLogger  // 日志 / Logger
+	storage   *storage.Storage     // 数据库 / Database
 	mu        sync.RWMutex         // 读写锁 / RW mutex
 	ctx       context.Context      // 上下文 / Context
 	cancel    context.CancelFunc   // 取消函数 / Cancel function
@@ -49,13 +51,14 @@ type StopLossManager struct {
 
 // NewStopLossManager creates a new StopLossManager
 // NewStopLossManager 创建新的止损管理器
-func NewStopLossManager(cfg *config.Config, executor *BinanceExecutor, log *logger.ColorLogger) *StopLossManager {
+func NewStopLossManager(cfg *config.Config, executor *BinanceExecutor, log *logger.ColorLogger, db *storage.Storage) *StopLossManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StopLossManager{
 		positions: make(map[string]*Position),
 		executor:  executor,
 		config:    cfg,
 		logger:    log,
+		storage:   db,
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -84,6 +87,67 @@ func (sm *StopLossManager) RemovePosition(symbol string) {
 
 	delete(sm.positions, symbol)
 	sm.logger.Info(fmt.Sprintf("【%s】持仓已移除", symbol))
+}
+
+// ClosePosition closes a position completely: cancels stop-loss order, removes from memory, and updates database
+// ClosePosition 完整关闭持仓：取消止损单、从内存移除、更新数据库
+func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, closePrice float64, closeReason string, realizedPnL float64) error {
+	sm.mu.Lock()
+	pos, exists := sm.positions[symbol]
+	sm.mu.Unlock()
+
+	if !exists {
+		sm.logger.Warning(fmt.Sprintf("⚠️  %s 持仓不存在，无需关闭", symbol))
+		return nil
+	}
+
+	sm.logger.Info(fmt.Sprintf("【%s】正在关闭持仓...", symbol))
+
+	// Step 1: Cancel Binance stop-loss order
+	// 步骤 1：取消币安止损单
+	if pos.StopLossOrderID != "" {
+		if err := sm.cancelStopLossOrder(ctx, pos); err != nil {
+			sm.logger.Warning(fmt.Sprintf("⚠️  取消 %s 止损单失败: %v（继续关闭流程）", symbol, err))
+		} else {
+			sm.logger.Success(fmt.Sprintf("✅ %s 止损单已取消", symbol))
+		}
+	}
+
+	// Step 2: Remove from memory
+	// 步骤 2：从内存移除
+	sm.mu.Lock()
+	delete(sm.positions, symbol)
+	sm.mu.Unlock()
+	sm.logger.Info(fmt.Sprintf("✅ %s 已从止损管理器移除", symbol))
+
+	// Step 3: Update database status
+	// 步骤 3：更新数据库状态
+	if sm.storage != nil {
+		// Get position record from database
+		// 从数据库获取持仓记录
+		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		if err != nil {
+			sm.logger.Warning(fmt.Sprintf("⚠️  获取 %s 持仓记录失败: %v（跳过数据库更新）", symbol, err))
+		} else if posRecord != nil {
+			// Update position record
+			// 更新持仓记录
+			now := time.Now()
+			posRecord.Closed = true
+			posRecord.CloseTime = &now
+			posRecord.ClosePrice = closePrice
+			posRecord.CloseReason = closeReason
+			posRecord.RealizedPnL = realizedPnL
+
+			if err := sm.storage.UpdatePosition(posRecord); err != nil {
+				sm.logger.Warning(fmt.Sprintf("⚠️  更新 %s 数据库状态失败: %v", symbol, err))
+			} else {
+				sm.logger.Success(fmt.Sprintf("✅ %s 数据库状态已更新为已关闭", symbol))
+			}
+		}
+	}
+
+	sm.logger.Success(fmt.Sprintf("✅【%s】持仓完全关闭（止损单已取消，内存已清理，数据库已更新）", symbol))
+	return nil
 }
 
 // PlaceInitialStopLoss places initial stop-loss order for a position

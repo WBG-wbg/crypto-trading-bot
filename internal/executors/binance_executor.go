@@ -35,6 +35,15 @@ const (
 	PositionModeHedge  PositionMode = "hedge"
 )
 
+// MarginType represents the margin type
+// MarginType 表示保证金类型
+type MarginType string
+
+const (
+	MarginTypeCross    MarginType = "cross"    // 全仓模式 / Cross margin
+	MarginTypeIsolated MarginType = "isolated" // 逐仓模式 / Isolated margin
+)
+
 // Position represents a trading position
 type Position struct {
 	// Basic position info
@@ -201,6 +210,52 @@ func (e *BinanceExecutor) DetectPositionMode(ctx context.Context) error {
 	return nil
 }
 
+// DetectMarginType detects the current margin type for a symbol
+// DetectMarginType 检测指定交易对的当前保证金类型（全仓/逐仓）
+func (e *BinanceExecutor) DetectMarginType(ctx context.Context, symbol string) (MarginType, error) {
+	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
+
+	var marginType MarginType
+
+	err := e.withRetry(func() error {
+		positions, err := e.client.NewGetPositionRiskService().
+			Symbol(binanceSymbol).
+			Do(ctx)
+
+		if err != nil {
+			return err
+		}
+
+		// Check margin type from position risk info
+		// 从持仓风险信息中获取保证金类型
+		if len(positions) > 0 {
+			marginTypeStr := strings.ToLower(positions[0].MarginType)
+			if marginTypeStr == "cross" {
+				marginType = MarginTypeCross
+			} else if marginTypeStr == "isolated" {
+				marginType = MarginTypeIsolated
+			} else {
+				// Default to cross if unknown
+				// 未知类型默认为全仓
+				marginType = MarginTypeCross
+			}
+		} else {
+			// No position data, default to cross
+			// 无持仓数据，默认为全仓
+			marginType = MarginTypeCross
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		e.logger.Warning("无法检测保证金类型，默认为全仓模式")
+		return MarginTypeCross, nil
+	}
+
+	return marginType, nil
+}
+
 // SetupExchange sets up exchange parameters
 func (e *BinanceExecutor) SetupExchange(ctx context.Context, symbol string, leverage int) error {
 	// Detect position mode
@@ -208,8 +263,33 @@ func (e *BinanceExecutor) SetupExchange(ctx context.Context, symbol string, leve
 		return fmt.Errorf("failed to detect position mode: %w", err)
 	}
 
+	// Check current position to avoid leverage reduction error (-4161)
+	// 检查当前持仓，避免杠杆降低错误 (-4161)
+	currentPosition, err := e.GetCurrentPosition(ctx, symbol)
+	if err != nil {
+		e.logger.Warning(fmt.Sprintf("⚠️  无法获取当前持仓信息: %v，尝试设置杠杆", err))
+	} else if currentPosition != nil {
+		// Has position, check if leverage reduction is attempted
+		// 有持仓，检查是否尝试降低杠杆
+		if leverage < currentPosition.Leverage {
+			e.logger.Warning(fmt.Sprintf(
+				"⚠️  跳过杠杆设置：有持仓时不允许降低杠杆 (当前 %dx -> 目标 %dx)",
+				currentPosition.Leverage, leverage))
+			e.logger.Info(fmt.Sprintf("   提示：如需降低杠杆，请先平仓后再设置"))
+
+			// Skip leverage setting but continue with balance check
+			// 跳过杠杆设置，但继续检查余额
+			goto checkBalance
+		} else if leverage == currentPosition.Leverage {
+			e.logger.Info(fmt.Sprintf("✓ 杠杆已是 %dx，无需调整", leverage))
+			goto checkBalance
+		}
+		// If leverage > currentPosition.Leverage, continue to set (increase is allowed)
+		// 如果 leverage > currentPosition.Leverage，继续设置（允许提高杠杆）
+	}
+
 	// Set leverage with retry
-	err := e.withRetry(func() error {
+	err = e.withRetry(func() error {
 		_, err := e.client.NewChangeLeverageService().
 			Symbol(e.config.GetBinanceSymbolFor(symbol)).
 			Leverage(leverage).
@@ -223,6 +303,7 @@ func (e *BinanceExecutor) SetupExchange(ctx context.Context, symbol string, leve
 
 	e.logger.Success(fmt.Sprintf("设置杠杆倍数: %dx", leverage))
 
+checkBalance:
 	// Get balance
 	account, err := e.client.NewGetAccountService().Do(ctx)
 	if err != nil {
