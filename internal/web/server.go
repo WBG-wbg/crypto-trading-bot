@@ -511,49 +511,14 @@ func (s *Server) handleCurrentBalance(ctx context.Context, c *app.RequestContext
 			continue
 		}
 
-		// Sync position to database
-		// 将持仓信息同步到数据库
-		position := portfolioMgr.GetPosition(symbol)
-		if position != nil && position.Size > 0 {
-			// Convert executors.Position to storage.PositionRecord
-			// 将 executors.Position 转换为 storage.PositionRecord
-			posRecord := &storage.PositionRecord{
-				ID:               position.ID,
-				Symbol:           position.Symbol,
-				Side:             position.Side,
-				EntryPrice:       position.EntryPrice,
-				EntryTime:        position.EntryTime,
-				Quantity:         position.Size,
-				Leverage:         position.Leverage,
-				CurrentPrice:     position.CurrentPrice,
-				HighestPrice:     position.HighestPrice,
-				UnrealizedPnL:    position.UnrealizedPnL,
-				InitialStopLoss:  position.InitialStopLoss,
-				CurrentStopLoss:  position.CurrentStopLoss,
-				StopLossType:     position.StopLossType,
-				TrailingDistance: position.TrailingDistance,
-				ATR:              position.ATR,
-				OpenReason:       "", // Not available from real-time query
-				Closed:           false,
-			}
-
-			// Check if position exists in database
-			// 检查持仓是否已存在于数据库
-			existingPos, err := s.storage.GetPositionByID(posRecord.ID)
-			if err != nil || existingPos == nil {
-				// New position, save it
-				// 新持仓，保存到数据库
-				if err := s.storage.SavePosition(posRecord); err != nil {
-					s.logger.Warning(fmt.Sprintf("⚠️  保存 %s 持仓失败: %v", symbol, err))
-				}
-			} else {
-				// Existing position, update it
-				// 已存在的持仓，更新数据库
-				if err := s.storage.UpdatePosition(posRecord); err != nil {
-					s.logger.Warning(fmt.Sprintf("⚠️  更新 %s 持仓失败: %v", symbol, err))
-				}
-			}
-		}
+		// NOTE: Position data is NOT synced to database here.
+		// 注意：持仓数据不会在此处同步到数据库。
+		// Positions should only be saved when opened (cmd/web/main.go or cmd/main.go).
+		// 持仓应该只在开仓时保存（cmd/web/main.go 或 cmd/main.go）。
+		// This API endpoint only provides real-time balance and position info to the frontend.
+		// 此 API 端点仅向前端提供实时余额和持仓信息。
+		// Use /api/positions for database positions or /api/positions/live for Binance live positions.
+		// 使用 /api/positions 获取数据库持仓或 /api/positions/live 获取币安实时持仓。
 	}
 
 	// Return current balance data

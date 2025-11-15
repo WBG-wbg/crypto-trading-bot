@@ -170,7 +170,26 @@ func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, clo
 // PlaceInitialStopLoss places initial stop-loss order for a position
 // PlaceInitialStopLoss 为持仓下初始止损单
 func (sm *StopLossManager) PlaceInitialStopLoss(ctx context.Context, pos *Position) error {
-	return sm.placeStopLossOrder(ctx, pos, pos.InitialStopLoss)
+	err := sm.placeStopLossOrder(ctx, pos, pos.InitialStopLoss)
+	if err != nil {
+		return err
+	}
+
+	// Sync stop-loss order ID to database
+	// 同步止损单 ID 到数据库
+	if sm.storage != nil && pos.StopLossOrderID != "" {
+		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		if err == nil && posRecord != nil {
+			posRecord.StopLossOrderID = pos.StopLossOrderID
+			if err := sm.storage.UpdatePosition(posRecord); err != nil {
+				sm.logger.Warning(fmt.Sprintf("⚠️  更新数据库止损单 ID 失败: %v", err))
+			} else {
+				sm.logger.Info(fmt.Sprintf("✓ 数据库已同步止损单 ID: %s", pos.StopLossOrderID))
+			}
+		}
+	}
+
+	return nil
 }
 
 // GetPosition gets a position by symbol
