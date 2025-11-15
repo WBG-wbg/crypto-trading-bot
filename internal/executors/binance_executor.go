@@ -504,10 +504,23 @@ func (e *BinanceExecutor) executeBuy(ctx context.Context, symbol string, current
 			return err
 		}
 
+		// Get fill price from order
+		// 从订单获取成交价格
+		fillPrice, _ := parseFloat(order.AvgPrice)
+		if fillPrice == 0 {
+			// Fallback: query current market price
+			// 回退：查询当前市价
+			currentPrice, err := e.GetCurrentPrice(ctx, symbol)
+			if err == nil {
+				fillPrice = currentPrice
+			}
+		}
+
 		result.Success = true
 		result.OrderID = fmt.Sprintf("%d", order.OrderID)
+		result.Price = fillPrice
 		result.Message = "订单执行成功"
-		e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d", order.OrderID))
+		e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d, 成交价: %.2f", order.OrderID, fillPrice))
 	} else {
 		result.Message = "已有多仓，不重复开仓（系统保护：防止意外加仓）"
 		e.logger.Warning("⚠️ 已有多仓，不重复开仓")
@@ -561,10 +574,23 @@ func (e *BinanceExecutor) executeSell(ctx context.Context, symbol string, curren
 			return err
 		}
 
+		// Get fill price from order
+		// 从订单获取成交价格
+		fillPrice, _ := parseFloat(order.AvgPrice)
+		if fillPrice == 0 {
+			// Fallback: query current market price
+			// 回退：查询当前市价
+			currentPrice, err := e.GetCurrentPrice(ctx, symbol)
+			if err == nil {
+				fillPrice = currentPrice
+			}
+		}
+
 		result.Success = true
 		result.OrderID = fmt.Sprintf("%d", order.OrderID)
+		result.Price = fillPrice
 		result.Message = "订单执行成功"
-		e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d", order.OrderID))
+		e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d, 成交价: %.2f", order.OrderID, fillPrice))
 	} else {
 		result.Message = "已有空仓，不重复开仓（系统保护：防止意外加仓）"
 		e.logger.Warning("⚠️ 已有空仓，不重复开仓")
