@@ -72,30 +72,45 @@ func (sm *StopLossManager) RegisterPosition(pos *Position) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	// Normalize symbol to Binance format (BTCUSDT instead of BTC/USDT)
+	// 统一符号格式为币安格式（BTCUSDT 而不是 BTC/USDT）
+	// This prevents duplicate position tracking for the same asset
+	// 防止同一资产被重复跟踪
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(pos.Symbol)
+	pos.Symbol = normalizedSymbol
+
 	pos.HighestPrice = pos.EntryPrice // 初始化最高价/最低价 / Initialize highest/lowest
 	pos.CurrentPrice = pos.EntryPrice
 	pos.StopLossType = "fixed" // LLM 驱动的固定止损 / LLM-driven fixed stop
 
-	sm.positions[pos.Symbol] = pos
-	sm.logger.Success(fmt.Sprintf("【%s】持仓已注册，入场价: %.2f, 初始止损: %.2f",
-		pos.Symbol, pos.EntryPrice, pos.InitialStopLoss))
+	sm.positions[normalizedSymbol] = pos
+	sm.logger.Success(fmt.Sprintf("【%s】持仓已注册，入场价: %.2f, 初始止损: %.2f, 当前止损: %.2f",
+		normalizedSymbol, pos.EntryPrice, pos.InitialStopLoss, pos.CurrentStopLoss))
 }
 
 // RemovePosition removes a position from management
 // RemovePosition 从管理中移除持仓
 func (sm *StopLossManager) RemovePosition(symbol string) {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	delete(sm.positions, symbol)
+	delete(sm.positions, normalizedSymbol)
 	sm.logger.Info(fmt.Sprintf("【%s】持仓已移除", symbol))
 }
 
 // ClosePosition closes a position completely: cancels stop-loss order, removes from memory, and updates database
 // ClosePosition 完整关闭持仓：取消止损单、从内存移除、更新数据库
 func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, closePrice float64, closeReason string, realizedPnL float64) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.Lock()
-	pos, exists := sm.positions[symbol]
+	pos, exists := sm.positions[normalizedSymbol]
 	sm.mu.Unlock()
 
 	if !exists {
@@ -118,7 +133,7 @@ func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, clo
 	// Step 2: Remove from memory
 	// 步骤 2：从内存移除
 	sm.mu.Lock()
-	delete(sm.positions, symbol)
+	delete(sm.positions, normalizedSymbol)
 	sm.mu.Unlock()
 	sm.logger.Info(fmt.Sprintf("✅ %s 已从止损管理器移除", symbol))
 
@@ -161,17 +176,25 @@ func (sm *StopLossManager) PlaceInitialStopLoss(ctx context.Context, pos *Positi
 // GetPosition gets a position by symbol
 // GetPosition 根据交易对获取持仓
 func (sm *StopLossManager) GetPosition(symbol string) *Position {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	return sm.positions[symbol]
+	return sm.positions[normalizedSymbol]
 }
 
 // UpdateStopLoss updates stop-loss price for a position (called by LLM every 15 minutes)
 // UpdateStopLoss 更新持仓的止损价格（每 15 分钟由 LLM 调用）
 func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, newStopLoss float64, reason string) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.Lock()
-	pos, exists := sm.positions[symbol]
+	pos, exists := sm.positions[normalizedSymbol]
 	if !exists {
 		sm.mu.Unlock()
 		return fmt.Errorf("持仓 %s 不存在", symbol)
@@ -193,12 +216,13 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 		return fmt.Errorf("空仓止损只能向下移动")
 	}
 
-	// Check if change is significant enough (threshold: 3%)
-	// 检查变化是否足够大（阈值：3%）
+	// Check if change is significant enough (threshold from config)
+	// 检查变化是否足够大（阈值从配置读取）
 	changePercent := math.Abs((newStopLoss-oldStop)/oldStop) * 100
-	if changePercent < 3.0 {
-		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价格变化较小 (%.2f → %.2f, 变化 %.2f%%)，跳过更新以避免频繁调整",
-			pos.Symbol, oldStop, newStopLoss, changePercent))
+	threshold := sm.config.StopLossScopeThreshold
+	if changePercent < threshold {
+		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价格变化较小 (%.2f → %.2f, 变化 %.2f%% < 阈值 %.1f%%)，跳过更新以避免频繁调整",
+			pos.Symbol, oldStop, newStopLoss, changePercent, threshold))
 		return nil
 	}
 
@@ -208,10 +232,12 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 
 	// Cancel old stop-loss order if exists
 	// 取消旧的止损单（如果存在）
+	// CRITICAL: Old order MUST be cancelled before placing new one to avoid duplicate orders
+	// 关键：必须先取消旧订单再下新订单，避免出现重复止损单
 	if pos.StopLossOrderID != "" {
 		if err := sm.cancelStopLossOrder(ctx, pos); err != nil {
-			sm.logger.Warning(fmt.Sprintf("取消旧止损单失败: %v", err))
-			// Continue anyway / 继续执行
+			sm.logger.Error(fmt.Sprintf("❌ 取消旧止损单失败: %v", err))
+			return fmt.Errorf("无法取消旧止损单（订单ID: %s）: %w", pos.StopLossOrderID, err)
 		}
 	}
 
@@ -259,15 +285,19 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 // 但价格在 10:07 飙升到 $930，传统采样会错过 $930。
 // K 线 API 保证我们捕获到真实的 $930 最高价。
 func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, symbol string) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.Lock()
-	pos, exists := sm.positions[symbol]
+	pos, exists := sm.positions[normalizedSymbol]
 	if !exists {
 		sm.mu.Unlock()
 		return nil // 无持仓 / No position
 	}
 	sm.mu.Unlock()
 
-	binanceSymbol := sm.config.GetBinanceSymbolFor(symbol)
+	binanceSymbol := normalizedSymbol
 
 	// Query Klines from entry time to now
 	// 查询从开仓时间到现在的所有 K 线
@@ -370,8 +400,12 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 // the stop-loss automatically, and the system needs to sync this change.
 // 这对于服务器端止损策略至关重要，因为币安会自动执行止损，系统需要同步这个变化。
 func (sm *StopLossManager) ReconcilePosition(ctx context.Context, symbol string) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.Lock()
-	managedPos, exists := sm.positions[symbol]
+	managedPos, exists := sm.positions[normalizedSymbol]
 	sm.mu.Unlock()
 
 	if !exists {
@@ -458,15 +492,19 @@ func (sm *StopLossManager) ReconcilePosition(ctx context.Context, symbol string)
 // when a stop-loss is triggered.
 // 这是一个辅助方法，当止损触发时能提供更精确的平仓价格信息。
 func (sm *StopLossManager) CheckStopLossOrderStatus(ctx context.Context, symbol string) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.RLock()
-	pos, exists := sm.positions[symbol]
+	pos, exists := sm.positions[normalizedSymbol]
 	sm.mu.RUnlock()
 
 	if !exists || pos.StopLossOrderID == "" {
 		return nil // No position or no stop-loss order
 	}
 
-	binanceSymbol := sm.config.GetBinanceSymbolFor(symbol)
+	binanceSymbol := normalizedSymbol
 
 	// Query order status from Binance
 	// 从币安查询订单状态
@@ -530,8 +568,12 @@ func (sm *StopLossManager) CheckStopLossOrderStatus(ctx context.Context, symbol 
 // Use Binance server-side STOP_MARKET orders instead.
 // 请使用币安服务器端 STOP_MARKET 订单。
 func (sm *StopLossManager) UpdatePosition(ctx context.Context, symbol string, currentPrice float64) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
 	sm.mu.Lock()
-	pos, exists := sm.positions[symbol]
+	pos, exists := sm.positions[normalizedSymbol]
 	if !exists {
 		sm.mu.Unlock()
 		return nil // 无持仓 / No position
@@ -619,7 +661,14 @@ func (sm *StopLossManager) cancelStopLossOrder(ctx context.Context, pos *Positio
 		return nil
 	}
 
+	// Normalize symbol to Binance format
+	// 统一符号格式为币安格式
 	binanceSymbol := sm.config.GetBinanceSymbolFor(pos.Symbol)
+
+	// Log cancellation attempt
+	// 记录取消尝试
+	sm.logger.Info(fmt.Sprintf("【%s】正在取消止损单: OrderID=%s, Symbol=%s",
+		pos.Symbol, pos.StopLossOrderID, binanceSymbol))
 
 	_, err := sm.executor.client.NewCancelOrderService().
 		Symbol(binanceSymbol).
@@ -627,10 +676,13 @@ func (sm *StopLossManager) cancelStopLossOrder(ctx context.Context, pos *Positio
 		Do(ctx)
 
 	if err != nil {
-		return fmt.Errorf("取消止损单失败: %w", err)
+		// Provide detailed error context
+		// 提供详细的错误上下文
+		return fmt.Errorf("取消止损单失败 (Symbol=%s, OrderID=%s): %w",
+			binanceSymbol, pos.StopLossOrderID, err)
 	}
 
-	sm.logger.Info(fmt.Sprintf("【%s】旧止损单已取消: %s", pos.Symbol, pos.StopLossOrderID))
+	sm.logger.Success(fmt.Sprintf("【%s】旧止损单已取消: %s", pos.Symbol, pos.StopLossOrderID))
 	pos.StopLossOrderID = ""
 
 	return nil

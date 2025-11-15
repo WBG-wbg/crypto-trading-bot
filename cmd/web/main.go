@@ -190,12 +190,45 @@ func main() {
 		log.Warning(fmt.Sprintf("加载活跃持仓失败: %v", err))
 	} else if len(activePositions) > 0 {
 		log.Info(fmt.Sprintf("发现 %d 个活跃持仓，正在注册到止损管理器...", len(activePositions)))
+
+		// Deduplicate positions by normalized symbol
+		// 按标准化符号去重持仓
+		// This prevents BTC/USDT and BTCUSDT being treated as separate positions
+		// 防止 BTC/USDT 和 BTCUSDT 被当作不同的持仓
+		posMap := make(map[string]*storage.PositionRecord)
 		for _, posRecord := range activePositions {
+			normalizedSymbol := cfg.GetBinanceSymbolFor(posRecord.Symbol)
+
+			// If duplicate found, keep the one with valid entry price
+			// 如果发现重复，保留有效入场价的记录
+			if existing, ok := posMap[normalizedSymbol]; ok {
+				// Prefer record with non-zero entry price
+				// 优先选择入场价非零的记录
+				if posRecord.EntryPrice > 0 && existing.EntryPrice == 0 {
+					log.Warning(fmt.Sprintf("⚠️  发现重复持仓: %s 和 %s，保留入场价非零的记录",
+						existing.Symbol, posRecord.Symbol))
+					posMap[normalizedSymbol] = posRecord
+				} else if posRecord.EntryPrice == 0 && existing.EntryPrice > 0 {
+					log.Warning(fmt.Sprintf("⚠️  发现重复持仓: %s 和 %s，保留入场价非零的记录",
+						posRecord.Symbol, existing.Symbol))
+					// Keep existing
+				} else {
+					log.Warning(fmt.Sprintf("⚠️  发现重复持仓: %s 和 %s，保留第一个",
+						existing.Symbol, posRecord.Symbol))
+				}
+			} else {
+				posMap[normalizedSymbol] = posRecord
+			}
+		}
+
+		// Register deduplicated positions
+		// 注册去重后的持仓
+		for normalizedSymbol, posRecord := range posMap {
 			// Convert PositionRecord to Position
 			// 将 PositionRecord 转换为 Position
 			pos := &executors.Position{
 				ID:               posRecord.ID,
-				Symbol:           posRecord.Symbol,
+				Symbol:           normalizedSymbol, // Use normalized symbol / 使用标准化符号
 				Side:             posRecord.Side,
 				EntryPrice:       posRecord.EntryPrice,
 				EntryTime:        posRecord.EntryTime,
@@ -211,7 +244,7 @@ func main() {
 				StopLossOrderID:  posRecord.StopLossOrderID, // ✅ 恢复止损单 ID
 			}
 			globalStopLossManager.RegisterPosition(pos)
-			log.Success(fmt.Sprintf("已恢复持仓: %s %s @ $%.2f", posRecord.Symbol, posRecord.Side, posRecord.EntryPrice))
+			log.Success(fmt.Sprintf("已恢复持仓: %s %s @ $%.2f", normalizedSymbol, posRecord.Side, posRecord.EntryPrice))
 		}
 	} else {
 		log.Info("暂无活跃持仓")

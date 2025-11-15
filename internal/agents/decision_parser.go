@@ -218,12 +218,13 @@ func extractConfidence(text string) float64 {
 func extractLeverage(text string) int {
 	// Look for leverage patterns like "杠杆倍数: 15" or "leverage: 15x" or "12倍"
 	// 查找杠杆模式，如 "杠杆倍数: 15" 或 "leverage: 15x" 或 "12倍"
+	// ⚠️ 顺序很重要！更具体的模式必须在更宽泛的模式之前
 	patterns := []string{
-		`杠杆倍数[：:\s]*\*{0,2}\s*([0-9]+)`,       // 杠杆倍数: 15 or **杠杆倍数**: 12
-		`杠杆[：:\s]*\*{0,2}\s*([0-9]+)`,         // 杠杆: 10
-		`leverage[：:\s]*\*{0,2}\s*([0-9]+)x?`, // leverage: 15 or leverage: 15x
-		`([0-9]+)倍(?:杠杆)?`,                    // 12倍 or 12倍杠杆
-		`([0-9]+)x(?:\s*leverage)?`,           // 15x or 15x leverage or 15xleverage
+		`杠杆倍数\*{0,2}[：:\s]*\*{0,2}\s*([0-9]+)[x倍]?`,  // **杠杆倍数**: 15x or 15倍 or 杠杆倍数: 15
+		`杠杆\*{0,2}[：:\s]*\*{0,2}\s*([0-9]+)[x倍]?`,    // **杠杆**: 10x or 10倍 or 杠杆: 10
+		`leverage\*{0,2}[：:\s]*\*{0,2}\s*([0-9]+)x?`, // **leverage**: 15x or leverage: 15
+		`([0-9]+)x(?:\s*leverage)?`,                  // 15x or 15x leverage (放在"倍"之前)
+		`([0-9]+)倍杠杆`,                                // 12倍杠杆 (必须有"杠杆"二字，避免误匹配)
 	}
 
 	for _, pattern := range patterns {

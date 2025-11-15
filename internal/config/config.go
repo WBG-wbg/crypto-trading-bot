@@ -69,7 +69,8 @@ type Config struct {
 
 	// Stop-loss management configuration (LLM-driven fixed stop-loss only)
 	// 止损管理配置（仅 LLM 驱动的固定止损）
-	EnableStopLoss bool // 是否启用止损管理 / Enable stop-loss management
+	EnableStopLoss         bool    // 是否启用止损管理 / Enable stop-loss management
+	StopLossScopeThreshold float64 // 止损价格变化阈值（百分比）/ Stop-loss price change threshold (percentage)
 
 	// Memory system
 	UseMemory  bool
@@ -159,7 +160,8 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		EnableSentimentAnalysis: viper.GetBool("ENABLE_SENTIMENT_ANALYSIS"),
 
 		// Stop-loss management (LLM-driven)
-		EnableStopLoss: viper.GetBool("ENABLE_STOPLOSS"),
+		EnableStopLoss:         viper.GetBool("ENABLE_STOPLOSS"),
+		StopLossScopeThreshold: viper.GetFloat64("STOPLOSS_SCOPE_THRESHOLD"),
 
 		// Memory system
 		UseMemory:  viper.GetBool("USE_MEMORY"),
@@ -291,7 +293,8 @@ func setDefaults() {
 
 	// Stop-loss management defaults (LLM-driven fixed stop-loss)
 	// 止损管理默认值（LLM 驱动的固定止损）
-	viper.SetDefault("ENABLE_STOPLOSS", true) // 启用止损管理 / Enable stop-loss management
+	viper.SetDefault("ENABLE_STOPLOSS", true)         // 启用止损管理 / Enable stop-loss management
+	viper.SetDefault("STOPLOSS_SCOPE_THRESHOLD", 1.0) // 止损价格变化阈值 1.0% / Stop-loss change threshold 1.0%
 
 	viper.SetDefault("USE_MEMORY", true)
 	viper.SetDefault("MEMORY_TOP_K", 3)
