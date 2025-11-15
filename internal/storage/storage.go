@@ -45,6 +45,7 @@ type PositionRecord struct {
 	UnrealizedPnL    float64
 	OpenReason       string
 	ATR              float64
+	StopLossOrderID  string // 止损单 ID / Stop-loss order ID
 	Closed           bool
 	CloseTime        *time.Time
 	ClosePrice       float64
@@ -153,6 +154,7 @@ func (s *Storage) initSchema() error {
 		unrealized_pnl REAL,
 		open_reason TEXT,
 		atr REAL,
+		stop_loss_order_id TEXT,
 		closed BOOLEAN DEFAULT 0,
 		close_time DATETIME,
 		close_price REAL,
@@ -198,6 +200,7 @@ func (s *Storage) initSchema() error {
 	migrationSQL := `
 	ALTER TABLE trading_sessions ADD COLUMN batch_id TEXT;
 	ALTER TABLE trading_sessions ADD COLUMN full_decision TEXT;
+	ALTER TABLE positions ADD COLUMN stop_loss_order_id TEXT;
 	`
 	// Ignore errors as columns may already exist
 	// 忽略错误，因为字段可能已经存在
@@ -616,8 +619,8 @@ func (s *Storage) SavePosition(pos *PositionRecord) error {
 		id, symbol, side, entry_price, entry_time, quantity, leverage,
 		initial_stop_loss, current_stop_loss, stop_loss_type,
 		trailing_distance, highest_price, current_price,
-		unrealized_pnl, open_reason, atr, closed
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		unrealized_pnl, open_reason, atr, stop_loss_order_id, closed
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(
@@ -625,7 +628,7 @@ func (s *Storage) SavePosition(pos *PositionRecord) error {
 		pos.ID, pos.Symbol, pos.Side, pos.EntryPrice, pos.EntryTime, pos.Quantity, pos.Leverage,
 		pos.InitialStopLoss, pos.CurrentStopLoss, pos.StopLossType,
 		pos.TrailingDistance, pos.HighestPrice, pos.CurrentPrice,
-		pos.UnrealizedPnL, pos.OpenReason, pos.ATR, pos.Closed,
+		pos.UnrealizedPnL, pos.OpenReason, pos.ATR, pos.StopLossOrderID, pos.Closed,
 	)
 
 	if err != nil {
@@ -646,6 +649,7 @@ func (s *Storage) UpdatePosition(pos *PositionRecord) error {
 		highest_price = ?,
 		current_price = ?,
 		unrealized_pnl = ?,
+		stop_loss_order_id = ?,
 		closed = ?,
 		close_time = ?,
 		close_price = ?,
@@ -658,6 +662,7 @@ func (s *Storage) UpdatePosition(pos *PositionRecord) error {
 		query,
 		pos.CurrentStopLoss, pos.StopLossType, pos.TrailingDistance,
 		pos.HighestPrice, pos.CurrentPrice, pos.UnrealizedPnL,
+		pos.StopLossOrderID,
 		pos.Closed, pos.CloseTime, pos.ClosePrice, pos.CloseReason, pos.RealizedPnL,
 		pos.ID,
 	)
@@ -676,7 +681,7 @@ func (s *Storage) GetActivePositions() ([]*PositionRecord, error) {
 	SELECT id, symbol, side, entry_price, entry_time, quantity, leverage,
 		   initial_stop_loss, current_stop_loss, stop_loss_type,
 		   trailing_distance, highest_price, current_price,
-		   unrealized_pnl, open_reason, atr, closed,
+		   unrealized_pnl, open_reason, atr, stop_loss_order_id, closed,
 		   close_time, close_price, close_reason, realized_pnl
 	FROM positions
 	WHERE closed = 0
@@ -694,13 +699,13 @@ func (s *Storage) GetActivePositions() ([]*PositionRecord, error) {
 		pos := &PositionRecord{}
 		var trailingDistance, unrealizedPnL, atr, closePrice, realizedPnL sql.NullFloat64
 		var closeTime sql.NullTime
-		var closeReason sql.NullString
+		var closeReason, stopLossOrderID sql.NullString
 
 		err := rows.Scan(
 			&pos.ID, &pos.Symbol, &pos.Side, &pos.EntryPrice, &pos.EntryTime, &pos.Quantity, &pos.Leverage,
 			&pos.InitialStopLoss, &pos.CurrentStopLoss, &pos.StopLossType,
 			&trailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
-			&unrealizedPnL, &pos.OpenReason, &atr, &pos.Closed,
+			&unrealizedPnL, &pos.OpenReason, &atr, &stopLossOrderID, &pos.Closed,
 			&closeTime, &closePrice, &closeReason, &realizedPnL,
 		)
 		if err != nil {
@@ -717,6 +722,9 @@ func (s *Storage) GetActivePositions() ([]*PositionRecord, error) {
 		}
 		if atr.Valid {
 			pos.ATR = atr.Float64
+		}
+		if stopLossOrderID.Valid {
+			pos.StopLossOrderID = stopLossOrderID.String
 		}
 		if closeTime.Valid {
 			pos.CloseTime = &closeTime.Time
@@ -744,7 +752,7 @@ func (s *Storage) GetPositionsBySymbol(symbol string) ([]*PositionRecord, error)
 	SELECT id, symbol, side, entry_price, entry_time, quantity, leverage,
 		   initial_stop_loss, current_stop_loss, stop_loss_type,
 		   trailing_distance, highest_price, current_price,
-		   unrealized_pnl, open_reason, atr, closed,
+		   unrealized_pnl, open_reason, atr, stop_loss_order_id, closed,
 		   close_time, close_price, close_reason, realized_pnl
 	FROM positions
 	WHERE symbol = ?
@@ -763,13 +771,13 @@ func (s *Storage) GetPositionsBySymbol(symbol string) ([]*PositionRecord, error)
 		pos := &PositionRecord{}
 		var trailingDistance, unrealizedPnL, atr, closePrice, realizedPnL sql.NullFloat64
 		var closeTime sql.NullTime
-		var closeReason sql.NullString
+		var closeReason, stopLossOrderID sql.NullString
 
 		err := rows.Scan(
 			&pos.ID, &pos.Symbol, &pos.Side, &pos.EntryPrice, &pos.EntryTime, &pos.Quantity, &pos.Leverage,
 			&pos.InitialStopLoss, &pos.CurrentStopLoss, &pos.StopLossType,
 			&trailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
-			&unrealizedPnL, &pos.OpenReason, &atr, &pos.Closed,
+			&unrealizedPnL, &pos.OpenReason, &atr, &stopLossOrderID, &pos.Closed,
 			&closeTime, &closePrice, &closeReason, &realizedPnL,
 		)
 		if err != nil {
@@ -786,6 +794,9 @@ func (s *Storage) GetPositionsBySymbol(symbol string) ([]*PositionRecord, error)
 		}
 		if atr.Valid {
 			pos.ATR = atr.Float64
+		}
+		if stopLossOrderID.Valid {
+			pos.StopLossOrderID = stopLossOrderID.String
 		}
 		if closeTime.Valid {
 			pos.CloseTime = &closeTime.Time
@@ -813,7 +824,7 @@ func (s *Storage) GetPositionByID(positionID string) (*PositionRecord, error) {
 	SELECT id, symbol, side, entry_price, entry_time, quantity, leverage,
 		   initial_stop_loss, current_stop_loss, stop_loss_type,
 		   trailing_distance, highest_price, current_price,
-		   unrealized_pnl, open_reason, atr, closed,
+		   unrealized_pnl, open_reason, atr, stop_loss_order_id, closed,
 		   close_time, close_price, close_reason, realized_pnl
 	FROM positions
 	WHERE id = ?
@@ -825,13 +836,13 @@ func (s *Storage) GetPositionByID(positionID string) (*PositionRecord, error) {
 	pos := &PositionRecord{}
 	var trailingDistance, unrealizedPnL, atr, closePrice, realizedPnL sql.NullFloat64
 	var closeTime sql.NullTime
-	var closeReason sql.NullString
+	var closeReason, stopLossOrderID sql.NullString
 
 	err := row.Scan(
 		&pos.ID, &pos.Symbol, &pos.Side, &pos.EntryPrice, &pos.EntryTime, &pos.Quantity, &pos.Leverage,
 		&pos.InitialStopLoss, &pos.CurrentStopLoss, &pos.StopLossType,
 		&trailingDistance, &pos.HighestPrice, &pos.CurrentPrice,
-		&unrealizedPnL, &pos.OpenReason, &atr, &pos.Closed,
+		&unrealizedPnL, &pos.OpenReason, &atr, &stopLossOrderID, &pos.Closed,
 		&closeTime, &closePrice, &closeReason, &realizedPnL,
 	)
 
@@ -852,6 +863,9 @@ func (s *Storage) GetPositionByID(positionID string) (*PositionRecord, error) {
 	}
 	if atr.Valid {
 		pos.ATR = atr.Float64
+	}
+	if stopLossOrderID.Valid {
+		pos.StopLossOrderID = stopLossOrderID.String
 	}
 	if closeTime.Valid {
 		pos.CloseTime = &closeTime.Time

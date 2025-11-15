@@ -401,8 +401,19 @@ func (e *BinanceExecutor) ExecuteTrade(ctx context.Context, symbol string, actio
 
 	if e.testMode {
 		e.logger.Warning("测试模式 - 仅模拟交易，不实际下单")
+
+		// In test mode, get current market price for accurate position tracking
+		// 测试模式下，获取当前市场价格用于准确的持仓跟踪
+		currentPrice, err := e.GetCurrentPrice(ctx, symbol)
+		if err != nil {
+			e.logger.Warning(fmt.Sprintf("⚠️  测试模式：获取当前价格失败: %v，使用 0.0", err))
+			currentPrice = 0.0
+		}
+
 		result.Success = true
-		result.Message = "测试模式：模拟交易成功"
+		result.Price = currentPrice
+		result.Filled = amount
+		result.Message = fmt.Sprintf("测试模式：模拟交易成功 @ $%.2f", currentPrice)
 		return result
 	}
 
@@ -693,8 +704,32 @@ func (e *BinanceExecutor) GetPositionSummary(ctx context.Context, symbol string,
 	summary.WriteString(fmt.Sprintf("- 已用保证金: %.2f USDT\n", usedMargin))
 	summary.WriteString(fmt.Sprintf("- 资金使用率: %.1f%% %s\n", usageRate, riskLevel))
 
-	// Get position
-	position, _ := e.GetCurrentPosition(ctx, symbol)
+	// Get position (prioritize StopLossManager for accurate HighestPrice tracking)
+	// 获取持仓（优先从 StopLossManager 获取以获得准确的最高/最低价跟踪）
+	var position *Position
+	var managedPos *Position // Position from StopLossManager (has HighestPrice)
+
+	if stopLossManager != nil {
+		managedPos = stopLossManager.GetPosition(symbol)
+	}
+
+	// Always get fresh data from Binance for real-time UnrealizedPnL, LiquidationPrice, etc.
+	// 始终从币安获取最新数据（实时盈亏、爆仓价等）
+	position, _ = e.GetCurrentPosition(ctx, symbol)
+
+	// If we have both, merge HighestPrice from managed position into fresh position
+	// 如果两个都有，将托管持仓的 HighestPrice 合并到最新持仓中
+	if position != nil && managedPos != nil {
+		position.HighestPrice = managedPos.HighestPrice
+		position.CurrentPrice = managedPos.CurrentPrice
+		position.InitialStopLoss = managedPos.InitialStopLoss
+		position.CurrentStopLoss = managedPos.CurrentStopLoss
+	} else if position == nil && managedPos != nil {
+		// If Binance API failed, use managed position
+		// 如果币安 API 失败，使用托管持仓
+		position = managedPos
+	}
+
 	if position != nil && position.Side != "" {
 		sideCN := "多头"
 		if position.Side == "short" {
@@ -730,6 +765,35 @@ func (e *BinanceExecutor) GetPositionSummary(ctx context.Context, symbol string,
 		summary.WriteString(fmt.Sprintf("- 开仓价格: $%.2f\n", position.EntryPrice))
 		summary.WriteString(fmt.Sprintf("- 杠杆倍数: %dx\n", position.Leverage))
 		summary.WriteString(fmt.Sprintf("- 当前价格: $%.2f\n", currentPrice))
+
+		// Display highest/lowest price since position entry
+		// 显示持仓期间的最高/最低价
+		if position.HighestPrice > 0 {
+			if position.Side == "long" {
+				summary.WriteString(fmt.Sprintf("- 持仓期间最高价: $%.2f", position.HighestPrice))
+
+				// Calculate how far current price is from highest
+				// 计算当前价格距离最高价的距离
+				priceFromHigh := ((position.HighestPrice - currentPrice) / position.HighestPrice) * 100
+				if priceFromHigh > 0.1 {
+					summary.WriteString(fmt.Sprintf(" (当前回撤 %.2f%%)\n", priceFromHigh))
+				} else {
+					summary.WriteString(" (当前在最高点)\n")
+				}
+			} else {
+				summary.WriteString(fmt.Sprintf("- 持仓期间最低价: $%.2f", position.HighestPrice))
+
+				// Calculate how far current price is from lowest
+				// 计算当前价格距离最低价的距离
+				priceFromLow := ((currentPrice - position.HighestPrice) / position.HighestPrice) * 100
+				if priceFromLow > 0.1 {
+					summary.WriteString(fmt.Sprintf(" (当前反弹 %.2f%%)\n", priceFromLow))
+				} else {
+					summary.WriteString(" (当前在最低点)\n")
+				}
+			}
+		}
+
 		summary.WriteString(fmt.Sprintf("- 未实现盈亏: %+.2f USDT (%+.2f%%)\n", position.UnrealizedPnL, pnlPct))
 
 		// Display stop-loss information if available

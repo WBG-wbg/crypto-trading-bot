@@ -470,6 +470,24 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 
 				g.logger.Info(fmt.Sprintf("  📈 正在获取 %s 持仓...", sym))
 
+				// Update position price from Klines (get REAL highest/lowest price)
+				// 从 K 线更新持仓价格（获取真实的最高/最低价）
+				if err := g.stopLossManager.UpdatePositionPriceFromKlines(ctx, sym); err != nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  更新 %s 价格失败: %v", sym, err))
+				}
+
+				// Reconcile position (detect if stop-loss was triggered by Binance)
+				// 对账持仓（检测币安是否已自动执行止损）
+				if err := g.stopLossManager.ReconcilePosition(ctx, sym); err != nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  对账 %s 失败: %v", sym, err))
+				}
+
+				// Check stop-loss order status for precise close price (auxiliary verification)
+				// 检查止损单状态以获得精确平仓价格（辅助验证）
+				if err := g.stopLossManager.CheckStopLossOrderStatus(ctx, sym); err != nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  检查 %s 止损单状态失败: %v", sym, err))
+				}
+
 				posInfo := g.executor.GetPositionSummary(ctx, sym, g.stopLossManager)
 				g.state.SetPositionInfo(sym, posInfo)
 

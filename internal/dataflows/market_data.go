@@ -620,7 +620,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 	sb.WriteString(fmt.Sprintf("下述所有价格或信号数据均按时间从旧到新排列。\n\n"))
 	// === 日内数据（最近10期）===
 	// === Intraday Data (Last 10 periods) ===
-	sb.WriteString(fmt.Sprintf("日内数据(%s)\n\n", timeframe))
+	sb.WriteString(fmt.Sprintf("日内数据:\n\n"))
 
 	// Determine series length (up to 10 data points)
 	// 确定序列长度（最多10个数据点）
@@ -647,7 +647,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 	for i := startIdx; i <= lastIdx; i++ {
 		prices = append(prices, ohlcvData[i].Close)
 	}
-	sb.WriteString(fmt.Sprintf("中间价: %s\n\n", formatSeries(prices, 0, len(prices)-1, 1)))
+	sb.WriteString(fmt.Sprintf("中间价(%s间隔): %s\n\n", timeframe, formatSeries(prices, 0, len(prices)-1, 1)))
 
 	// EMA(20)
 	if len(indicators.EMA_20) > lastIdx {

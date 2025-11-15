@@ -3,6 +3,8 @@ package executors
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,6 +193,15 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 		return fmt.Errorf("空仓止损只能向下移动")
 	}
 
+	// Check if change is significant enough (threshold: 3%)
+	// 检查变化是否足够大（阈值：3%）
+	changePercent := math.Abs((newStopLoss-oldStop)/oldStop) * 100
+	if changePercent < 3.0 {
+		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价格变化较小 (%.2f → %.2f, 变化 %.2f%%)，跳过更新以避免频繁调整",
+			pos.Symbol, oldStop, newStopLoss, changePercent))
+		return nil
+	}
+
 	// Record history
 	// 记录历史
 	pos.AddStopLossEvent(oldStop, newStopLoss, reason, "llm")
@@ -214,6 +225,300 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 	sm.logger.Success(fmt.Sprintf("【%s】✅ LLM 止损已更新: %.2f → %.2f (%s)",
 		pos.Symbol, oldStop, newStopLoss, reason))
 
+	// Persist to database
+	// 持久化到数据库
+	if sm.storage != nil {
+		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		if err == nil && posRecord != nil {
+			posRecord.CurrentStopLoss = newStopLoss
+			posRecord.StopLossOrderID = pos.StopLossOrderID // ✅ 同步止损单 ID
+			if err := sm.storage.UpdatePosition(posRecord); err != nil {
+				sm.logger.Warning(fmt.Sprintf("⚠️  更新数据库止损失败: %v", err))
+			} else {
+				sm.logger.Info(fmt.Sprintf("✓ 数据库已同步新止损价: %.2f", newStopLoss))
+			}
+		}
+	}
+
+	return nil
+}
+
+// UpdatePositionPriceFromKlines updates position with REAL highest/lowest price from Klines
+// UpdatePositionPriceFromKlines 使用 K 线数据更新持仓的真实最高/最低价
+//
+// This method queries Binance Klines API to get the REAL highest/lowest price
+// since position entry, avoiding the issue of missing price movements between
+// system execution intervals (every 15 minutes).
+// 此方法查询币安 K 线 API 获取开仓以来的真实最高/最低价，
+// 避免错过系统执行间隔（每 15 分钟）之间的价格波动。
+//
+// Example: If system runs at 10:00 (entry $900), 10:15 (price $920),
+// but price spiked to $930 at 10:07, traditional sampling would miss $930.
+// Klines API guarantees we capture the real $930 highest price.
+// 示例：系统在 10:00（开仓 $900）、10:15（价格 $920）运行，
+// 但价格在 10:07 飙升到 $930，传统采样会错过 $930。
+// K 线 API 保证我们捕获到真实的 $930 最高价。
+func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, symbol string) error {
+	sm.mu.Lock()
+	pos, exists := sm.positions[symbol]
+	if !exists {
+		sm.mu.Unlock()
+		return nil // 无持仓 / No position
+	}
+	sm.mu.Unlock()
+
+	binanceSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
+	// Query Klines from entry time to now
+	// 查询从开仓时间到现在的所有 K 线
+	klines, err := sm.executor.client.NewKlinesService().
+		Symbol(binanceSymbol).
+		Interval("15m"). // 使用 15 分钟 K 线（与系统运行间隔一致）
+		StartTime(pos.EntryTime.UnixMilli()).
+		EndTime(time.Now().UnixMilli()).
+		Do(ctx)
+
+	if err != nil {
+		return fmt.Errorf("获取 K 线数据失败: %w", err)
+	}
+
+	if len(klines) == 0 {
+		return fmt.Errorf("未获取到 K 线数据")
+	}
+
+	// Find REAL highest/lowest price from all klines
+	// 从所有 K 线中找出真实的最高/最低价
+	var realHighest, realLowest float64
+	for i, k := range klines {
+		high, _ := parseFloat(k.High)
+		low, _ := parseFloat(k.Low)
+
+		if i == 0 {
+			realHighest = high
+			realLowest = low
+		} else {
+			if high > realHighest {
+				realHighest = high
+			}
+			if low < realLowest {
+				realLowest = low
+			}
+		}
+	}
+
+	// Get current price from latest kline
+	// 从最新 K 线获取当前价格
+	currentPrice, _ := parseFloat(klines[len(klines)-1].Close)
+
+	// Calculate unrealized PnL
+	// 计算未实现盈亏
+	var unrealizedPnL float64
+	if pos.Side == "long" {
+		unrealizedPnL = (currentPrice - pos.EntryPrice) * pos.Quantity
+	} else {
+		unrealizedPnL = (pos.EntryPrice - currentPrice) * pos.Quantity
+	}
+
+	// Update memory
+	// 更新内存
+	if pos.Side == "long" {
+		pos.HighestPrice = realHighest
+	} else {
+		pos.HighestPrice = realLowest // 空仓用 HighestPrice 字段存储最低价
+	}
+	pos.CurrentPrice = currentPrice
+	pos.UnrealizedPnL = unrealizedPnL
+
+	// Update database immediately
+	// 立即更新数据库
+	if sm.storage != nil {
+		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		if err == nil && posRecord != nil {
+			posRecord.HighestPrice = pos.HighestPrice
+			posRecord.CurrentPrice = pos.CurrentPrice
+			posRecord.UnrealizedPnL = pos.UnrealizedPnL
+
+			if err := sm.storage.UpdatePosition(posRecord); err != nil {
+				sm.logger.Warning(fmt.Sprintf("⚠️  更新 %s 数据库失败: %v", symbol, err))
+			}
+		}
+	}
+
+	// Log update
+	// 记录更新
+	priceType := "最高价"
+	if pos.Side == "short" {
+		priceType = "最低价"
+	}
+	sm.logger.Info(fmt.Sprintf("【%s】价格已更新: 当前=%.2f, %s=%.2f (基于 %d 根K线)",
+		pos.Symbol, currentPrice, priceType, pos.HighestPrice, len(klines)))
+
+	return nil
+}
+
+// ReconcilePosition reconciles in-memory position with actual Binance position
+// ReconcilePosition 对账内存持仓与币安实际持仓
+//
+// This method detects if a stop-loss order has been triggered by comparing
+// the position in memory with the actual position on Binance. If the position
+// exists in memory but not on Binance, it means the stop-loss was triggered
+// and the position needs to be cleaned up.
+// 此方法通过对比内存中的持仓与币安实际持仓，检测止损单是否已触发。
+// 如果内存中有持仓但币安没有，说明止损单已触发，需要清理持仓数据。
+//
+// This is critical for server-side stop-loss strategy where Binance executes
+// the stop-loss automatically, and the system needs to sync this change.
+// 这对于服务器端止损策略至关重要，因为币安会自动执行止损，系统需要同步这个变化。
+func (sm *StopLossManager) ReconcilePosition(ctx context.Context, symbol string) error {
+	sm.mu.Lock()
+	managedPos, exists := sm.positions[symbol]
+	sm.mu.Unlock()
+
+	if !exists {
+		return nil // No position in memory, nothing to reconcile
+	}
+
+	// Get actual position from Binance
+	// 从币安获取实际持仓
+	actualPos, err := sm.executor.GetCurrentPosition(ctx, symbol)
+	if err != nil {
+		sm.logger.Warning(fmt.Sprintf("⚠️  对账失败（无法获取 %s 币安持仓）: %v", symbol, err))
+		return err
+	}
+
+	// Case 1: Position exists in memory but NOT on Binance → Stop-loss triggered
+	// 情况1：内存有持仓但币安没有 → 止损单已触发
+	if actualPos == nil {
+		sm.logger.Warning(fmt.Sprintf("🔔【%s】检测到止损单已触发（币安无持仓，内存有持仓）", symbol))
+		sm.logger.Info(fmt.Sprintf("   持仓详情: %s %.4f @ $%.2f, 止损价: $%.2f",
+			managedPos.Side, managedPos.Quantity, managedPos.EntryPrice, managedPos.CurrentStopLoss))
+
+		// Get current market price as close price
+		// 获取当前市场价格作为平仓价格
+		closePrice, err := sm.getCurrentPrice(ctx, symbol)
+		if err != nil || closePrice == 0 {
+			sm.logger.Warning(fmt.Sprintf("⚠️  无法获取平仓价格，使用止损价: %.2f", managedPos.CurrentStopLoss))
+			closePrice = managedPos.CurrentStopLoss
+		}
+
+		// Calculate realized PnL
+		// 计算已实现盈亏
+		var realizedPnL float64
+		if managedPos.Side == "long" {
+			realizedPnL = (closePrice - managedPos.EntryPrice) * managedPos.Quantity
+		} else {
+			realizedPnL = (managedPos.EntryPrice - closePrice) * managedPos.Quantity
+		}
+
+		// Close position (removes from memory and updates database)
+		// 关闭持仓（从内存移除并更新数据库）
+		reason := "止损单触发（币安自动执行）"
+		if err := sm.ClosePosition(ctx, symbol, closePrice, reason, realizedPnL); err != nil {
+			sm.logger.Warning(fmt.Sprintf("⚠️  清理已止损持仓失败: %v", err))
+			return err
+		}
+
+		sm.logger.Success(fmt.Sprintf("✅【%s】已清理止损后的持仓数据（盈亏: %+.2f USDT）", symbol, realizedPnL))
+		return nil
+	}
+
+	// Case 2: Position exists on both sides → Validate consistency
+	// 情况2：币安和内存都有持仓 → 验证一致性
+
+	// Check position side
+	// 检查持仓方向
+	if actualPos.Side != managedPos.Side {
+		sm.logger.Warning(fmt.Sprintf("⚠️【%s】持仓方向不一致！币安:%s, 内存:%s，以币安为准",
+			symbol, actualPos.Side, managedPos.Side))
+		managedPos.Side = actualPos.Side
+	}
+
+	// Check position size (with 0.1% tolerance for rounding)
+	// 检查持仓数量（允许0.1%的舍入误差）
+	tolerance := managedPos.Quantity * 0.001
+	sizeDiff := math.Abs(actualPos.Size - managedPos.Quantity)
+	if sizeDiff > tolerance && sizeDiff > 0.001 {
+		sm.logger.Warning(fmt.Sprintf("⚠️【%s】持仓数量不一致！币安:%.4f, 内存:%.4f，以币安为准",
+			symbol, actualPos.Size, managedPos.Quantity))
+		managedPos.Quantity = actualPos.Size
+		managedPos.Size = actualPos.Size
+	}
+
+	return nil
+}
+
+// CheckStopLossOrderStatus checks if stop-loss order still exists on Binance
+// CheckStopLossOrderStatus 检查止损单是否仍在币安存在
+//
+// This method queries the status of the stop-loss order on Binance. If the order
+// is filled or no longer exists, it triggers position reconciliation.
+// 此方法查询币安上止损单的状态。如果订单已成交或不再存在，则触发持仓对账。
+//
+// This is an auxiliary method that provides more precise close price information
+// when a stop-loss is triggered.
+// 这是一个辅助方法，当止损触发时能提供更精确的平仓价格信息。
+func (sm *StopLossManager) CheckStopLossOrderStatus(ctx context.Context, symbol string) error {
+	sm.mu.RLock()
+	pos, exists := sm.positions[symbol]
+	sm.mu.RUnlock()
+
+	if !exists || pos.StopLossOrderID == "" {
+		return nil // No position or no stop-loss order
+	}
+
+	binanceSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
+	// Query order status from Binance
+	// 从币安查询订单状态
+	order, err := sm.executor.client.NewGetOrderService().
+		Symbol(binanceSymbol).
+		OrderID(parseInt64(pos.StopLossOrderID)).
+		Do(ctx)
+
+	if err != nil {
+		// If order not found, it may have been executed
+		// 如果订单不存在，可能已被执行
+		if strings.Contains(err.Error(), "Unknown order") || strings.Contains(err.Error(), "Order does not exist") {
+			sm.logger.Warning(fmt.Sprintf("🔔【%s】止损单已不存在（可能已执行），订单ID: %s", symbol, pos.StopLossOrderID))
+			// Trigger reconciliation to clean up
+			// 触发对账以清理持仓
+			return sm.ReconcilePosition(ctx, symbol)
+		}
+		return fmt.Errorf("查询止损单状态失败: %w", err)
+	}
+
+	// Check if order is filled
+	// 检查订单是否已成交
+	if order.Status == futures.OrderStatusTypeFilled {
+		sm.logger.Warning(fmt.Sprintf("🔔【%s】止损单已成交，订单ID: %s, 状态: %s",
+			symbol, pos.StopLossOrderID, order.Status))
+
+		// Get executed price from order
+		// 从订单获取成交价格
+		closePrice, err := parseFloat(order.AvgPrice)
+		if err != nil || closePrice == 0 {
+			sm.logger.Warning(fmt.Sprintf("⚠️  无法解析成交价格，使用止损价: %.2f", pos.CurrentStopLoss))
+			closePrice = pos.CurrentStopLoss
+		}
+
+		// Calculate realized PnL
+		// 计算已实现盈亏
+		var realizedPnL float64
+		if pos.Side == "long" {
+			realizedPnL = (closePrice - pos.EntryPrice) * pos.Quantity
+		} else {
+			realizedPnL = (pos.EntryPrice - closePrice) * pos.Quantity
+		}
+
+		// Close position
+		// 关闭持仓
+		reason := fmt.Sprintf("止损单成交（订单ID: %s）", pos.StopLossOrderID)
+		return sm.ClosePosition(ctx, symbol, closePrice, reason, realizedPnL)
+	}
+
+	// Order still active
+	// 订单仍活跃
+	sm.logger.Info(fmt.Sprintf("✓【%s】止损单状态正常: %s", symbol, order.Status))
 	return nil
 }
 

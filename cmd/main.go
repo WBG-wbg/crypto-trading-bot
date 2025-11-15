@@ -353,8 +353,8 @@ func main() {
 							if currentPos != nil {
 								oldStop = fmt.Sprintf("%.2f", currentPos.CurrentStopLoss)
 							}
-							log.Success(fmt.Sprintf("✅ %s 止损已更新: %s → %.2f", symbol, oldStop, symbolDecision.StopLoss))
-							executionResults[symbol] = fmt.Sprintf("观望，止损已更新: %s → %.2f", oldStop, symbolDecision.StopLoss)
+							log.Success(fmt.Sprintf("✅ %s 止损更新处理完成: %s → %.2f", symbol, oldStop, symbolDecision.StopLoss))
+							executionResults[symbol] = fmt.Sprintf("观望，止损处理: %s → %.2f", oldStop, symbolDecision.StopLoss)
 						}
 					}
 				} else {
@@ -483,6 +483,33 @@ func main() {
 					// Register to stop-loss manager
 					// 注册到止损管理器
 					stopLossManager.RegisterPosition(position)
+
+					// Save position to database
+					// 保存持仓到数据库
+					posRecord := &storage.PositionRecord{
+						ID:              position.ID,
+						Symbol:          position.Symbol,
+						Side:            position.Side,
+						EntryPrice:      position.EntryPrice,
+						EntryTime:       position.EntryTime,
+						Quantity:        position.Quantity,
+						Leverage:        position.Leverage,
+						InitialStopLoss: position.InitialStopLoss,
+						CurrentStopLoss: position.CurrentStopLoss,
+						StopLossType:    position.StopLossType,
+						HighestPrice:    position.HighestPrice,
+						CurrentPrice:    position.CurrentPrice,
+						OpenReason:      position.OpenReason,
+						ATR:             position.ATR,
+						StopLossOrderID: position.StopLossOrderID, // ✅ 保存止损单 ID
+						Closed:          false,
+					}
+
+					if err := db.SavePosition(posRecord); err != nil {
+						log.Warning(fmt.Sprintf("⚠️  保存 %s 持仓到数据库失败: %v", symbol, err))
+					} else {
+						log.Success(fmt.Sprintf("✅ %s 持仓已保存到数据库 (ID: %s)", symbol, position.ID))
+					}
 
 					// Place initial stop-loss order
 					// 下初始止损单
