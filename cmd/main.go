@@ -176,7 +176,11 @@ func main() {
 	log.Info("  • 交易员 (Trader)")
 	log.Info("")
 
-	tradingGraph := agents.NewSimpleTradingGraph(cfg, log, executor)
+	// Initialize stop-loss manager (used by trading graph for position info)
+	// 初始化止损管理器（用于交易图的持仓信息）
+	stopLossManager := executors.NewStopLossManager(cfg, executor, log, db)
+
+	tradingGraph := agents.NewSimpleTradingGraph(cfg, log, executor, stopLossManager)
 
 	// ! 启动交易员分析流程
 	result, err := tradingGraph.Run(ctx)
@@ -290,13 +294,9 @@ func main() {
 
 		log.Info(portfolioMgr.GetPortfolioSummary())
 
-		// Initialize trade coordinator
-		// 初始化交易协调器
-		coordinator := executors.NewTradeCoordinator(cfg, executor, log)
-
-		// Initialize stop-loss manager
-		// 初始化止损管理器
-		stopLossManager := executors.NewStopLossManager(cfg, executor, log, db)
+		// Initialize trade coordinator with stop-loss manager
+		// 初始化交易协调器（传入止损管理器）
+		coordinator := executors.NewTradeCoordinator(cfg, executor, log, stopLossManager)
 
 		// Note: Local monitoring disabled - relying on Binance server-side stop-loss orders
 		// 注意：已禁用本地监控 - 完全依赖币安服务器端止损单
@@ -333,13 +333,29 @@ func main() {
 				// Update stop-loss if LLM provides new stop-loss price
 				// 如果 LLM 提供了新的止损价格，则更新止损
 				if symbolDecision.StopLoss > 0 {
-					err := stopLossManager.UpdateStopLoss(ctx, symbol, symbolDecision.StopLoss, symbolDecision.Reason)
-					if err != nil {
-						log.Warning(fmt.Sprintf("⚠️  更新 %s 止损失败: %v", symbol, err))
-						executionResults[symbol] = fmt.Sprintf("观望，更新止损失败: %v", err)
+					// Check if stop-loss price has changed
+					// 检查止损价格是否有变化
+					currentPos := stopLossManager.GetPosition(symbol)
+					if currentPos != nil && currentPos.CurrentStopLoss == symbolDecision.StopLoss {
+						// Stop-loss price unchanged, skip update
+						// 止损价格未变化，跳过更新
+						log.Info(fmt.Sprintf("💡 %s 止损价格未变化 (%.2f)，无需更新", symbol, symbolDecision.StopLoss))
+						executionResults[symbol] = fmt.Sprintf("观望，止损价格未变化: %.2f", symbolDecision.StopLoss)
 					} else {
-						log.Success(fmt.Sprintf("✅ %s 止损已更新至: %.2f", symbol, symbolDecision.StopLoss))
-						executionResults[symbol] = fmt.Sprintf("观望，止损已更新至: %.2f", symbolDecision.StopLoss)
+						// Stop-loss price changed, execute update
+						// 止损价格有变化，执行更新
+						err := stopLossManager.UpdateStopLoss(ctx, symbol, symbolDecision.StopLoss, symbolDecision.Reason)
+						if err != nil {
+							log.Warning(fmt.Sprintf("⚠️  更新 %s 止损失败: %v", symbol, err))
+							executionResults[symbol] = fmt.Sprintf("观望，更新止损失败: %v", err)
+						} else {
+							oldStop := "无"
+							if currentPos != nil {
+								oldStop = fmt.Sprintf("%.2f", currentPos.CurrentStopLoss)
+							}
+							log.Success(fmt.Sprintf("✅ %s 止损更新处理完成: %s → %.2f", symbol, oldStop, symbolDecision.StopLoss))
+							executionResults[symbol] = fmt.Sprintf("观望，止损处理: %s → %.2f", oldStop, symbolDecision.StopLoss)
+						}
 					}
 				} else {
 					executionResults[symbol] = "观望，不执行交易"
@@ -467,6 +483,33 @@ func main() {
 					// Register to stop-loss manager
 					// 注册到止损管理器
 					stopLossManager.RegisterPosition(position)
+
+					// Save position to database
+					// 保存持仓到数据库
+					posRecord := &storage.PositionRecord{
+						ID:              position.ID,
+						Symbol:          position.Symbol,
+						Side:            position.Side,
+						EntryPrice:      position.EntryPrice,
+						EntryTime:       position.EntryTime,
+						Quantity:        position.Quantity,
+						Leverage:        position.Leverage,
+						InitialStopLoss: position.InitialStopLoss,
+						CurrentStopLoss: position.CurrentStopLoss,
+						StopLossType:    position.StopLossType,
+						HighestPrice:    position.HighestPrice,
+						CurrentPrice:    position.CurrentPrice,
+						OpenReason:      position.OpenReason,
+						ATR:             position.ATR,
+						StopLossOrderID: position.StopLossOrderID, // ✅ 保存止损单 ID
+						Closed:          false,
+					}
+
+					if err := db.SavePosition(posRecord); err != nil {
+						log.Warning(fmt.Sprintf("⚠️  保存 %s 持仓到数据库失败: %v", symbol, err))
+					} else {
+						log.Success(fmt.Sprintf("✅ %s 持仓已保存到数据库 (ID: %s)", symbol, position.ID))
+					}
 
 					// Place initial stop-loss order
 					// 下初始止损单

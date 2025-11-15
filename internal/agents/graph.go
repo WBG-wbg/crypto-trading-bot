@@ -213,20 +213,22 @@ func loadPromptFromFile(promptPath string, log *logger.ColorLogger) string {
 
 // SimpleTradingGraph creates a simplified trading workflow using Eino Graph
 type SimpleTradingGraph struct {
-	config   *config.Config
-	logger   *logger.ColorLogger
-	executor *executors.BinanceExecutor
-	state    *AgentState
+	config          *config.Config
+	logger          *logger.ColorLogger
+	executor        *executors.BinanceExecutor
+	state           *AgentState
+	stopLossManager *executors.StopLossManager
 }
 
 // NewSimpleTradingGraph creates a new simple trading graph
 // NewSimpleTradingGraph 创建新的简单交易图
-func NewSimpleTradingGraph(cfg *config.Config, log *logger.ColorLogger, executor *executors.BinanceExecutor) *SimpleTradingGraph {
+func NewSimpleTradingGraph(cfg *config.Config, log *logger.ColorLogger, executor *executors.BinanceExecutor, stopLossManager *executors.StopLossManager) *SimpleTradingGraph {
 	return &SimpleTradingGraph{
-		config:   cfg,
-		logger:   log,
-		executor: executor,
-		state:    NewAgentState(cfg.CryptoSymbols, cfg.CryptoTimeframe),
+		config:          cfg,
+		logger:          log,
+		executor:        executor,
+		state:           NewAgentState(cfg.CryptoSymbols, cfg.CryptoTimeframe),
+		stopLossManager: stopLossManager,
 	}
 }
 
@@ -468,7 +470,25 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 
 				g.logger.Info(fmt.Sprintf("  📈 正在获取 %s 持仓...", sym))
 
-				posInfo := g.executor.GetPositionSummary(ctx, sym)
+				// Update position price from Klines (get REAL highest/lowest price)
+				// 从 K 线更新持仓价格（获取真实的最高/最低价）
+				if err := g.stopLossManager.UpdatePositionPriceFromKlines(ctx, sym); err != nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  更新 %s 价格失败: %v", sym, err))
+				}
+
+				// Reconcile position (detect if stop-loss was triggered by Binance)
+				// 对账持仓（检测币安是否已自动执行止损）
+				if err := g.stopLossManager.ReconcilePosition(ctx, sym); err != nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  对账 %s 失败: %v", sym, err))
+				}
+
+				// Check stop-loss order status for precise close price (auxiliary verification)
+				// 检查止损单状态以获得精确平仓价格（辅助验证）
+				if err := g.stopLossManager.CheckStopLossOrderStatus(ctx, sym); err != nil {
+					g.logger.Warning(fmt.Sprintf("  ⚠️  检查 %s 止损单状态失败: %v", sym, err))
+				}
+
+				posInfo := g.executor.GetPositionSummary(ctx, sym, g.stopLossManager)
 				g.state.SetPositionInfo(sym, posInfo)
 
 				g.logger.Success(fmt.Sprintf("  ✅ %s 持仓信息获取完成", sym))

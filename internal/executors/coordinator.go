@@ -12,18 +12,20 @@ import (
 // TradeCoordinator coordinates the entire trading flow from decision to execution
 // TradeCoordinator 协调从决策到执行的整个交易流程
 type TradeCoordinator struct {
-	config   *config.Config
-	executor *BinanceExecutor
-	logger   *logger.ColorLogger
+	config          *config.Config
+	executor        *BinanceExecutor
+	logger          *logger.ColorLogger
+	stopLossManager *StopLossManager
 }
 
 // NewTradeCoordinator creates a new TradeCoordinator
 // NewTradeCoordinator 创建新的交易协调器
-func NewTradeCoordinator(cfg *config.Config, executor *BinanceExecutor, log *logger.ColorLogger) *TradeCoordinator {
+func NewTradeCoordinator(cfg *config.Config, executor *BinanceExecutor, log *logger.ColorLogger, stopLossManager *StopLossManager) *TradeCoordinator {
 	return &TradeCoordinator{
-		config:   cfg,
-		executor: executor,
-		logger:   log,
+		config:          cfg,
+		executor:        executor,
+		logger:          log,
+		stopLossManager: stopLossManager,
 	}
 }
 
