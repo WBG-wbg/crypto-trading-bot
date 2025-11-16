@@ -29,6 +29,7 @@ type Server struct {
 	storage         *storage.Storage
 	stopLossManager *executors.StopLossManager
 	scheduler       *scheduler.TradingScheduler
+	sessionManager  *SessionManager // Session 管理器 / Session manager
 	hertz           *server.Hertz
 }
 
@@ -47,6 +48,7 @@ func NewServer(cfg *config.Config, log *logger.ColorLogger, db *storage.Storage,
 		storage:         db,
 		stopLossManager: stopLossMgr,
 		scheduler:       sched,
+		sessionManager:  NewSessionManager(), // 初始化 Session 管理器 / Initialize session manager
 		hertz:           h,
 	}
 
@@ -58,22 +60,33 @@ func NewServer(cfg *config.Config, log *logger.ColorLogger, db *storage.Storage,
 // setupRoutes configures all HTTP routes
 // setupRoutes 配置所有 HTTP 路由
 func (s *Server) setupRoutes() {
-	// Static pages
-	// 静态页面
-	s.hertz.GET("/", s.handleIndex)
-	s.hertz.GET("/sessions", s.handleSessions)
-	s.hertz.GET("/session/:id", s.handleSessionDetail)
-	s.hertz.GET("/stats", s.handleStats)
+	// Public routes (no authentication required)
+	// 公开路由（无需认证）
+	s.hertz.GET("/login", s.handleLogin)
+	s.hertz.POST("/login", s.handleLogin)
 	s.hertz.GET("/health", s.handleHealth)
 
-	// API endpoints
-	// API 端点
-	s.hertz.GET("/api/positions", s.handlePositions)
-	s.hertz.GET("/api/positions/live", s.handleLivePositions) // ✅ Real-time positions from Binance
-	s.hertz.GET("/api/positions/:symbol", s.handlePositionsBySymbol)
-	s.hertz.GET("/api/symbols", s.handleSymbols)
-	s.hertz.GET("/api/balance/history", s.handleBalanceHistory)
-	s.hertz.GET("/api/balance/current", s.handleCurrentBalance)
+	// Protected routes (authentication required)
+	// 受保护路由（需要认证）
+	protected := s.hertz.Group("/", s.AuthMiddleware())
+	{
+		// Static pages
+		// 静态页面
+		protected.GET("/", s.handleIndex)
+		protected.GET("/sessions", s.handleSessions)
+		protected.GET("/session/:id", s.handleSessionDetail)
+		protected.GET("/stats", s.handleStats)
+		protected.GET("/logout", s.handleLogout)
+
+		// API endpoints
+		// API 端点
+		protected.GET("/api/positions", s.handlePositions)
+		protected.GET("/api/positions/live", s.handleLivePositions) // ✅ Real-time positions from Binance
+		protected.GET("/api/positions/:symbol", s.handlePositionsBySymbol)
+		protected.GET("/api/symbols", s.handleSymbols)
+		protected.GET("/api/balance/history", s.handleBalanceHistory)
+		protected.GET("/api/balance/current", s.handleCurrentBalance)
+	}
 }
 
 // handleIndex renders the main dashboard

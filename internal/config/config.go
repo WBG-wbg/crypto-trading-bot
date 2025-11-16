@@ -82,7 +82,10 @@ type Config struct {
 	AutoExecute      bool
 
 	// Web monitoring
-	WebPort int
+	// Web 监控配置
+	WebPort     int
+	WebUsername string // Web 登录用户名 / Web login username
+	WebPassword string // Web 登录密码 / Web login password
 }
 
 // LoadConfig loads configuration from .env file or a custom path
@@ -173,7 +176,10 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		AutoExecute:      viper.GetBool("AUTO_EXECUTE"),
 
 		// Web monitoring
-		WebPort: viper.GetInt("WEB_PORT"),
+		// Web 监控配置
+		WebPort:     viper.GetInt("WEB_PORT"),
+		WebUsername: viper.GetString("WEB_USERNAME"),
+		WebPassword: viper.GetString("WEB_PASSWORD"),
 	}
 
 	// Auto-calculate lookback days if not set
@@ -304,6 +310,8 @@ func setDefaults() {
 	viper.SetDefault("AUTO_EXECUTE", false)
 
 	viper.SetDefault("WEB_PORT", 8080)
+	viper.SetDefault("WEB_USERNAME", "admin")
+	viper.SetDefault("WEB_PASSWORD", "changeme")
 }
 
 func getProjectDir() string {
