@@ -13,6 +13,9 @@ eval_data/
 uv.lock
 .claude/
 CLAUDE.md
+AGENTS.md
+to_do_list.md
+env.example.yaml
 .idea/
 doc/
 to_do_list.md

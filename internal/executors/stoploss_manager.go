@@ -133,8 +133,8 @@ func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, clo
 	sm.mu.Unlock()
 	sm.logger.Info(fmt.Sprintf("✅ %s 已从止损管理器移除", symbol))
 
-	// Step 3: Update database status
-	// 步骤 3：更新数据库状态
+	// Step 3: Update database status with retry
+	// 步骤 3：更新数据库状态（带重试）
 	if sm.storage != nil {
 		// Get position record from database
 		// 从数据库获取持仓记录
@@ -151,10 +151,20 @@ func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, clo
 			posRecord.CloseReason = closeReason
 			posRecord.RealizedPnL = realizedPnL
 
-			if err := sm.storage.UpdatePosition(posRecord); err != nil {
-				sm.logger.Warning(fmt.Sprintf("⚠️  更新 %s 数据库状态失败: %v", symbol, err))
-			} else {
+			// Retry database update up to 3 times
+			// 重试数据库更新最多 3 次
+			for i := 0; i < 3; i++ {
+				if err := sm.storage.UpdatePosition(posRecord); err != nil {
+					if i == 2 {
+						sm.logger.Error(fmt.Sprintf("❌ 更新 %s 数据库状态失败（已重试 3 次）: %v", symbol, err))
+						sm.logger.Warning(fmt.Sprintf("⚠️  数据库可能不一致：持仓已从内存删除但数据库状态未更新"))
+					} else {
+						time.Sleep(time.Millisecond * 100 * time.Duration(i+1))
+					}
+					continue
+				}
 				sm.logger.Success(fmt.Sprintf("✅ %s 数据库状态已更新为已关闭", symbol))
+				break
 			}
 		}
 	}
@@ -165,10 +175,19 @@ func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, clo
 
 // PlaceInitialStopLoss places initial stop-loss order for a position
 // PlaceInitialStopLoss 为持仓下初始止损单
+//
+// CRITICAL: This function MUST succeed before the position is considered safe.
+// 关键：此函数必须成功才能认为持仓是安全的。
+// If this function fails, the caller MUST remove the position from management.
+// 如果此函数失败，调用方必须从管理中移除持仓。
 func (sm *StopLossManager) PlaceInitialStopLoss(ctx context.Context, pos *Position) error {
+	// Try to place stop-loss order
+	// 尝试下止损单
 	err := sm.placeStopLossOrder(ctx, pos, pos.InitialStopLoss)
 	if err != nil {
-		return err
+		sm.logger.Error(fmt.Sprintf("❌ 下初始止损单失败: %v", err))
+		sm.logger.Warning(fmt.Sprintf("⚠️  持仓 %s 已注册但无止损保护，建议立即移除或手动下单", pos.Symbol))
+		return fmt.Errorf("下初始止损单失败，持仓无保护: %w", err)
 	}
 
 	// Sync stop-loss order ID to database
@@ -177,10 +196,20 @@ func (sm *StopLossManager) PlaceInitialStopLoss(ctx context.Context, pos *Positi
 		posRecord, err := sm.storage.GetPositionByID(pos.ID)
 		if err == nil && posRecord != nil {
 			posRecord.StopLossOrderID = pos.StopLossOrderID
-			if err := sm.storage.UpdatePosition(posRecord); err != nil {
-				sm.logger.Warning(fmt.Sprintf("⚠️  更新数据库止损单 ID 失败: %v", err))
-			} else {
+			// Retry database update up to 3 times
+			// 重试数据库更新最多 3 次
+			for i := 0; i < 3; i++ {
+				if err := sm.storage.UpdatePosition(posRecord); err != nil {
+					if i == 2 {
+						sm.logger.Warning(fmt.Sprintf("⚠️  更新数据库止损单 ID 失败（已重试 3 次）: %v", err))
+						// Don't fail the function, stop-loss order is already placed
+						// 不使函数失败，止损单已经下达
+					}
+					time.Sleep(time.Millisecond * 100 * time.Duration(i+1))
+					continue
+				}
 				sm.logger.Info(fmt.Sprintf("✓ 数据库已同步止损单 ID: %s", pos.StopLossOrderID))
+				break
 			}
 		}
 	}
@@ -209,12 +238,12 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
 
 	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
 	pos, exists := sm.positions[normalizedSymbol]
 	if !exists {
-		sm.mu.Unlock()
 		return fmt.Errorf("持仓 %s 不存在", symbol)
 	}
-	sm.mu.Unlock()
 
 	oldStop := pos.CurrentStopLoss
 
@@ -266,17 +295,26 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 	sm.logger.Success(fmt.Sprintf("【%s】✅ LLM 止损已更新: %.2f → %.2f (%s)",
 		pos.Symbol, oldStop, newStopLoss, reason))
 
-	// Persist to database
-	// 持久化到数据库
+	// Persist to database with retry
+	// 持久化到数据库（带重试）
 	if sm.storage != nil {
 		posRecord, err := sm.storage.GetPositionByID(pos.ID)
 		if err == nil && posRecord != nil {
 			posRecord.CurrentStopLoss = newStopLoss
 			posRecord.StopLossOrderID = pos.StopLossOrderID // ✅ 同步止损单 ID
-			if err := sm.storage.UpdatePosition(posRecord); err != nil {
-				sm.logger.Warning(fmt.Sprintf("⚠️  更新数据库止损失败: %v", err))
-			} else {
+			// Retry database update up to 3 times
+			// 重试数据库更新最多 3 次
+			for i := 0; i < 3; i++ {
+				if err := sm.storage.UpdatePosition(posRecord); err != nil {
+					if i == 2 {
+						sm.logger.Warning(fmt.Sprintf("⚠️  更新数据库止损失败（已重试 3 次）: %v", err))
+					} else {
+						time.Sleep(time.Millisecond * 100 * time.Duration(i+1))
+					}
+					continue
+				}
 				sm.logger.Info(fmt.Sprintf("✓ 数据库已同步新止损价: %.2f", newStopLoss))
+				break
 			}
 		}
 	}
@@ -302,13 +340,17 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 	// 标准化符号以匹配内部存储格式
 	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
 
-	sm.mu.Lock()
+	// Step 1: Get position data under lock
+	// 步骤 1：在锁内获取持仓数据
+	sm.mu.RLock()
 	pos, exists := sm.positions[normalizedSymbol]
 	if !exists {
-		sm.mu.Unlock()
+		sm.mu.RUnlock()
 		return nil // 无持仓 / No position
 	}
-	sm.mu.Unlock()
+	posID := pos.ID
+	posSide := pos.Side
+	sm.mu.RUnlock()
 
 	binanceSymbol := normalizedSymbol
 
@@ -316,17 +358,20 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 	// 从数据库获取当前存储的最高/最低价
 	var storedHighestPrice float64
 	if sm.storage != nil {
-		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		posRecord, err := sm.storage.GetPositionByID(posID)
 		if err == nil && posRecord != nil {
 			storedHighestPrice = posRecord.HighestPrice
 		} else {
 			// Fallback to memory if database read fails
-			// 如果数据库读取失败，先使用入场价，再使用内存中的值
-			storedHighestPrice = pos.EntryPrice
+			// 如果数据库读取失败，使用内存中的值
+			sm.mu.RLock()
 			storedHighestPrice = pos.HighestPrice
+			sm.mu.RUnlock()
 		}
 	} else {
+		sm.mu.RLock()
 		storedHighestPrice = pos.HighestPrice
+		sm.mu.RUnlock()
 	}
 
 	// Query ONLY the latest Kline (incremental update)
@@ -359,7 +404,7 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 	var newHighestPrice float64
 	var priceUpdated bool
 
-	if pos.Side == "long" {
+	if posSide == "long" {
 		// Long position: compare kline high with stored highest price
 		// 多仓：比较 K 线最高价与存储的最高价
 		if klineHigh > storedHighestPrice {
@@ -381,6 +426,17 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 		}
 	}
 
+	// Step 2: Calculate PnL and update memory under lock
+	// 步骤 2：在锁保护下计算盈亏并更新内存
+	sm.mu.Lock()
+	// Re-check position still exists
+	// 再次检查持仓是否仍存在
+	pos, exists = sm.positions[normalizedSymbol]
+	if !exists {
+		sm.mu.Unlock()
+		return nil // Position was closed during API call / 持仓在 API 调用期间被关闭
+	}
+
 	// Calculate unrealized PnL
 	// 计算未实现盈亏
 	var unrealizedPnL float64
@@ -395,15 +451,16 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 	pos.HighestPrice = newHighestPrice
 	pos.CurrentPrice = currentPrice
 	pos.UnrealizedPnL = unrealizedPnL
+	sm.mu.Unlock()
 
-	// Update database immediately
-	// 立即更新数据库
+	// Update database immediately (outside lock to avoid holding lock during I/O)
+	// 立即更新数据库（在锁外执行以避免 I/O 期间持有锁）
 	if sm.storage != nil {
-		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		posRecord, err := sm.storage.GetPositionByID(posID)
 		if err == nil && posRecord != nil {
-			posRecord.HighestPrice = pos.HighestPrice
-			posRecord.CurrentPrice = pos.CurrentPrice
-			posRecord.UnrealizedPnL = pos.UnrealizedPnL
+			posRecord.HighestPrice = newHighestPrice
+			posRecord.CurrentPrice = currentPrice
+			posRecord.UnrealizedPnL = unrealizedPnL
 
 			if err := sm.storage.UpdatePosition(posRecord); err != nil {
 				sm.logger.Warning(fmt.Sprintf("⚠️  更新 %s 数据库失败: %v", symbol, err))
@@ -415,7 +472,7 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 	// 记录更新
 	priceType := "最高价"
 	updateStatus := ""
-	if pos.Side == "short" {
+	if posSide == "short" {
 		priceType = "最低价"
 	}
 	if priceUpdated {
@@ -424,7 +481,7 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 		updateStatus = " (无变化)"
 	}
 	sm.logger.Info(fmt.Sprintf("【%s】价格检查: 当前=%.2f, %s=%.2f%s (K线: %.2f-%.2f)",
-		pos.Symbol, currentPrice, priceType, pos.HighestPrice, updateStatus, klineLow, klineHigh))
+		normalizedSymbol, currentPrice, priceType, newHighestPrice, updateStatus, klineLow, klineHigh))
 
 	return nil
 }
@@ -447,13 +504,21 @@ func (sm *StopLossManager) ReconcilePosition(ctx context.Context, symbol string)
 	// 标准化符号以匹配内部存储格式
 	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
 
-	sm.mu.Lock()
+	// Step 1: Get position data under lock
+	// 步骤 1：在锁内获取持仓数据
+	sm.mu.RLock()
 	managedPos, exists := sm.positions[normalizedSymbol]
-	sm.mu.Unlock()
-
 	if !exists {
+		sm.mu.RUnlock()
 		return nil // No position in memory, nothing to reconcile
 	}
+	// Copy necessary data to avoid holding lock during API call
+	// 复制必要数据以避免在 API 调用期间持有锁
+	posSide := managedPos.Side
+	posQuantity := managedPos.Quantity
+	posEntryPrice := managedPos.EntryPrice
+	posCurrentStopLoss := managedPos.CurrentStopLoss
+	sm.mu.RUnlock()
 
 	// Get actual position from Binance
 	// 从币安获取实际持仓
@@ -468,23 +533,23 @@ func (sm *StopLossManager) ReconcilePosition(ctx context.Context, symbol string)
 	if actualPos == nil {
 		sm.logger.Warning(fmt.Sprintf("🔔【%s】检测到止损单已触发（币安无持仓，内存有持仓）", symbol))
 		sm.logger.Info(fmt.Sprintf("   持仓详情: %s %.4f @ $%.2f, 止损价: $%.2f",
-			managedPos.Side, managedPos.Quantity, managedPos.EntryPrice, managedPos.CurrentStopLoss))
+			posSide, posQuantity, posEntryPrice, posCurrentStopLoss))
 
 		// Get current market price as close price
 		// 获取当前市场价格作为平仓价格
 		closePrice, err := sm.getCurrentPrice(ctx, symbol)
 		if err != nil || closePrice == 0 {
-			sm.logger.Warning(fmt.Sprintf("⚠️  无法获取平仓价格，使用止损价: %.2f", managedPos.CurrentStopLoss))
-			closePrice = managedPos.CurrentStopLoss
+			sm.logger.Warning(fmt.Sprintf("⚠️  无法获取平仓价格，使用止损价: %.2f", posCurrentStopLoss))
+			closePrice = posCurrentStopLoss
 		}
 
 		// Calculate realized PnL
 		// 计算已实现盈亏
 		var realizedPnL float64
-		if managedPos.Side == "long" {
-			realizedPnL = (closePrice - managedPos.EntryPrice) * managedPos.Quantity
+		if posSide == "long" {
+			realizedPnL = (closePrice - posEntryPrice) * posQuantity
 		} else {
-			realizedPnL = (managedPos.EntryPrice - closePrice) * managedPos.Quantity
+			realizedPnL = (posEntryPrice - closePrice) * posQuantity
 		}
 
 		// Close position (removes from memory and updates database)
@@ -501,6 +566,18 @@ func (sm *StopLossManager) ReconcilePosition(ctx context.Context, symbol string)
 
 	// Case 2: Position exists on both sides → Validate consistency
 	// 情况2：币安和内存都有持仓 → 验证一致性
+
+	// Step 2: Update position data under lock if inconsistent
+	// 步骤 2：如果不一致，在锁保护下更新持仓数据
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Re-check position still exists
+	// 再次检查持仓是否仍存在
+	managedPos, exists = sm.positions[normalizedSymbol]
+	if !exists {
+		return nil // Position was closed during API call
+	}
 
 	// Check position side
 	// 检查持仓方向
@@ -557,9 +634,18 @@ func (sm *StopLossManager) CheckStopLossOrderStatus(ctx context.Context, symbol 
 		Do(ctx)
 
 	if err != nil {
-		// If order not found, it may have been executed
-		// 如果订单不存在，可能已被执行
-		if strings.Contains(err.Error(), "Unknown order") || strings.Contains(err.Error(), "Order does not exist") {
+		// Check if order not found (likely executed or cancelled)
+		// 检查订单是否不存在（可能已执行或已取消）
+		// Note: Binance Go SDK doesn't provide typed errors, so we use string matching
+		// 注意：币安 Go SDK 不提供类型化错误，所以使用字符串匹配
+		// Common error messages: "Unknown order", "Order does not exist", "-2011"
+		// 常见错误消息："Unknown order"、"Order does not exist"、"-2011"
+		errMsg := err.Error()
+		isOrderNotFound := strings.Contains(errMsg, "Unknown order") ||
+			strings.Contains(errMsg, "Order does not exist") ||
+			strings.Contains(errMsg, "-2011") // Binance error code for unknown order
+
+		if isOrderNotFound {
 			sm.logger.Warning(fmt.Sprintf("🔔【%s】止损单已不存在（可能已执行），订单ID: %s", symbol, pos.StopLossOrderID))
 			// Trigger reconciliation to clean up
 			// 触发对账以清理持仓
