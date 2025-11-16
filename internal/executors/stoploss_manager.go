@@ -16,10 +16,6 @@ import (
 
 // StopLossManager manages stop-loss for all active positions
 // StopLossManager 管理所有活跃持仓的止损
-//
-// Architecture: Server-side stop-loss strategy (Fixed stop-loss)
-// 架构：服务器端止损策略（固定止损）
-//
 // Responsibilities:
 // 职责：
 //  1. Position lifecycle management (register, remove, query)
@@ -291,18 +287,16 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 // UpdatePositionPriceFromKlines updates position with REAL highest/lowest price from Klines
 // UpdatePositionPriceFromKlines 使用 K 线数据更新持仓的真实最高/最低价
 //
-// This method queries Binance Klines API to get the REAL highest/lowest price
-// since position entry, avoiding the issue of missing price movements between
-// system execution intervals (every 15 minutes).
-// 此方法查询币安 K 线 API 获取开仓以来的真实最高/最低价，
-// 避免错过系统执行间隔（每 15 分钟）之间的价格波动。
+// This method queries the LATEST 15-minute Kline from Binance and incrementally updates
+// the highest/lowest price by comparing with the stored value in database.
+// 此方法从币安获取最新的 15 分钟 K 线，通过与数据库中存储的值比较来增量更新最高/最低价。
 //
-// Example: If system runs at 10:00 (entry $900), 10:15 (price $920),
-// but price spiked to $930 at 10:07, traditional sampling would miss $930.
-// Klines API guarantees we capture the real $930 highest price.
-// 示例：系统在 10:00（开仓 $900）、10:15（价格 $920）运行，
-// 但价格在 10:07 飙升到 $930，传统采样会错过 $930。
-// K 线 API 保证我们捕获到真实的 $930 最高价。
+// Example: System runs every 15 minutes. At 10:15, it fetches the 10:00-10:15 kline.
+// If kline.High ($930) > database.highest_price ($920), update to $930.
+// Otherwise, keep $920. This avoids re-fetching all historical klines every time.
+// 示例：系统每 15 分钟运行一次。在 10:15，获取 10:00-10:15 的 K 线。
+// 如果 K 线最高价（$930）> 数据库最高价（$920），更新为 $930。
+// 否则保持 $920。这避免了每次都重新获取所有历史 K 线。
 func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, symbol string) error {
 	// Normalize symbol to match internal storage format
 	// 标准化符号以匹配内部存储格式
@@ -318,13 +312,31 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 
 	binanceSymbol := normalizedSymbol
 
-	// Query Klines from entry time to now
-	// 查询从开仓时间到现在的所有 K 线
+	// Get current stored highest_price from database
+	// 从数据库获取当前存储的最高/最低价
+	var storedHighestPrice float64
+	if sm.storage != nil {
+		posRecord, err := sm.storage.GetPositionByID(pos.ID)
+		if err == nil && posRecord != nil {
+			storedHighestPrice = posRecord.HighestPrice
+		} else {
+			// Fallback to memory if database read fails
+			// 如果数据库读取失败，先使用入场价，再使用内存中的值
+			storedHighestPrice = pos.EntryPrice
+			storedHighestPrice = pos.HighestPrice
+		}
+	} else {
+		storedHighestPrice = pos.HighestPrice
+	}
+
+	// Query ONLY the latest Kline (incremental update)
+	// 仅查询最新的 K 线（增量更新）
+	// Use configured trading interval instead of hardcoded value
+	// 使用配置的交易间隔而不是硬编码值
 	klines, err := sm.executor.client.NewKlinesService().
 		Symbol(binanceSymbol).
-		Interval("15m"). // 使用 15 分钟 K 线（与系统运行间隔一致）
-		StartTime(pos.EntryTime.UnixMilli()).
-		EndTime(time.Now().UnixMilli()).
+		Interval(sm.config.TradingInterval). // 使用配置的交易间隔（与系统运行间隔一致）
+		Limit(1).                            // 只获取最新一根 K 线 / Only fetch the latest kline
 		Do(ctx)
 
 	if err != nil {
@@ -335,29 +347,39 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 		return fmt.Errorf("未获取到 K 线数据")
 	}
 
-	// Find REAL highest/lowest price from all klines
-	// 从所有 K 线中找出真实的最高/最低价
-	var realHighest, realLowest float64
-	for i, k := range klines {
-		high, _ := parseFloat(k.High)
-		low, _ := parseFloat(k.Low)
+	// Parse latest kline data
+	// 解析最新 K 线数据
+	latestKline := klines[0]
+	klineHigh, _ := parseFloat(latestKline.High)
+	klineLow, _ := parseFloat(latestKline.Low)
+	currentPrice, _ := parseFloat(latestKline.Close)
 
-		if i == 0 {
-			realHighest = high
-			realLowest = low
+	// Incrementally update highest/lowest price
+	// 增量更新最高/最低价
+	var newHighestPrice float64
+	var priceUpdated bool
+
+	if pos.Side == "long" {
+		// Long position: compare kline high with stored highest price
+		// 多仓：比较 K 线最高价与存储的最高价
+		if klineHigh > storedHighestPrice {
+			newHighestPrice = klineHigh
+			priceUpdated = true
 		} else {
-			if high > realHighest {
-				realHighest = high
-			}
-			if low < realLowest {
-				realLowest = low
-			}
+			newHighestPrice = storedHighestPrice
+			priceUpdated = false
+		}
+	} else {
+		// Short position: compare kline low with stored lowest price (stored in HighestPrice field)
+		// 空仓：比较 K 线最低价与存储的最低价（存储在 HighestPrice 字段中）
+		if klineLow < storedHighestPrice {
+			newHighestPrice = klineLow
+			priceUpdated = true
+		} else {
+			newHighestPrice = storedHighestPrice
+			priceUpdated = false
 		}
 	}
-
-	// Get current price from latest kline
-	// 从最新 K 线获取当前价格
-	currentPrice, _ := parseFloat(klines[len(klines)-1].Close)
 
 	// Calculate unrealized PnL
 	// 计算未实现盈亏
@@ -370,11 +392,7 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 
 	// Update memory
 	// 更新内存
-	if pos.Side == "long" {
-		pos.HighestPrice = realHighest
-	} else {
-		pos.HighestPrice = realLowest // 空仓用 HighestPrice 字段存储最低价
-	}
+	pos.HighestPrice = newHighestPrice
 	pos.CurrentPrice = currentPrice
 	pos.UnrealizedPnL = unrealizedPnL
 
@@ -396,11 +414,17 @@ func (sm *StopLossManager) UpdatePositionPriceFromKlines(ctx context.Context, sy
 	// Log update
 	// 记录更新
 	priceType := "最高价"
+	updateStatus := ""
 	if pos.Side == "short" {
 		priceType = "最低价"
 	}
-	sm.logger.Info(fmt.Sprintf("【%s】价格已更新: 当前=%.2f, %s=%.2f (基于 %d 根K线)",
-		pos.Symbol, currentPrice, priceType, pos.HighestPrice, len(klines)))
+	if priceUpdated {
+		updateStatus = " ✅ 已更新"
+	} else {
+		updateStatus = " (无变化)"
+	}
+	sm.logger.Info(fmt.Sprintf("【%s】价格检查: 当前=%.2f, %s=%.2f%s (K线: %.2f-%.2f)",
+		pos.Symbol, currentPrice, priceType, pos.HighestPrice, updateStatus, klineLow, klineHigh))
 
 	return nil
 }

@@ -15,6 +15,7 @@ uv.lock
 CLAUDE.md
 .idea/
 doc/
+to_do_list.md
 
 # Go specific
 *.exe
