@@ -230,6 +230,43 @@ func (sm *StopLossManager) GetPosition(symbol string) *Position {
 	return sm.positions[normalizedSymbol]
 }
 
+// validateStopLossPrice validates if a stop-loss price is valid for the given position
+// validateStopLossPrice 验证止损价格对于给定持仓是否合法
+//
+// Returns:
+//   - currentPrice: the current market price fetched from Binance
+//   - error: nil if validation passes, error with detailed message if fails
+//
+// 返回值：
+//   - currentPrice: 从币安获取的当前市场价
+//   - error: 验证通过返回 nil，失败返回详细错误信息
+func (sm *StopLossManager) validateStopLossPrice(ctx context.Context, symbol string, pos *Position, newStopLoss float64) (float64, error) {
+	// Get current market price for validation
+	// 获取当前市场价格用于验证
+	currentPrice, err := sm.getCurrentPrice(ctx, symbol)
+	if err != nil {
+		return 0, fmt.Errorf("获取当前价格失败，无法验证止损价格: %w", err)
+	}
+
+	// Validate stop-loss price to prevent immediate trigger
+	// 验证止损价格以防止立即触发
+	if pos.Side == "short" {
+		// 空仓止损买入：止损价格必须高于当前市场价
+		if newStopLoss <= currentPrice {
+			return currentPrice, fmt.Errorf("空仓止损价格 %.2f 必须高于当前市场价 %.2f", newStopLoss, currentPrice)
+		}
+	} else {
+		// 多仓止损卖出：止损价格必须低于当前市场价
+		if newStopLoss >= currentPrice {
+			return currentPrice, fmt.Errorf("多仓止损价格 %.2f 必须低于当前市场价 %.2f", newStopLoss, currentPrice)
+		}
+	}
+
+	// Validation passed
+	// 验证通过
+	return currentPrice, nil
+}
+
 // UpdateStopLoss updates stop-loss price for a position (called by LLM every 15 minutes)
 // UpdateStopLoss 更新持仓的止损价格（每 15 分钟由 LLM 调用）
 func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, newStopLoss float64, reason string) error {
@@ -274,10 +311,24 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 	// 记录历史
 	pos.AddStopLossEvent(oldStop, newStopLoss, reason, "llm")
 
+	// CRITICAL FIX: Validate new stop-loss price BEFORE cancelling old order
+	// 关键修复：在取消旧订单之前先验证新止损价格
+	// This prevents leaving the position unprotected if validation fails
+	// 这可以防止验证失败时导致持仓无保护
+	currentPrice, err := sm.validateStopLossPrice(ctx, symbol, pos, newStopLoss)
+	if err != nil {
+		sm.logger.Warning(fmt.Sprintf("【%s】❌ 止损价格验证失败: %v，保留原止损单 %.2f",
+			pos.Symbol, err, oldStop))
+		return fmt.Errorf("止损价格验证失败，原止损单 %.2f 保持不变: %w", oldStop, err)
+	}
+
+	sm.logger.Info(fmt.Sprintf("【%s】✓ 止损价格验证通过: %.2f（当前价: %.2f），开始更新订单",
+		pos.Symbol, newStopLoss, currentPrice))
+
 	// Cancel old stop-loss order if exists
 	// 取消旧的止损单（如果存在）
-	// CRITICAL: Old order MUST be cancelled before placing new one to avoid duplicate orders
-	// 关键：必须先取消旧订单再下新订单，避免出现重复止损单
+	// Now safe to cancel - we've verified the new price is valid
+	// 现在可以安全取消 - 我们已验证新价格合法
 	if pos.StopLossOrderID != "" {
 		if err := sm.cancelStopLossOrder(ctx, pos); err != nil {
 			sm.logger.Error(fmt.Sprintf("❌ 取消旧止损单失败: %v", err))
@@ -288,7 +339,8 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 	// Place new stop-loss order
 	// 下新的止损单
 	if err := sm.placeStopLossOrder(ctx, pos, newStopLoss); err != nil {
-		return fmt.Errorf("下止损单失败: %w", err)
+		sm.logger.Error(fmt.Sprintf("❌【%s】下新止损单失败: %v，持仓现在无止损保护！", pos.Symbol, err))
+		return fmt.Errorf("下止损单失败（旧单已取消）: %w", err)
 	}
 
 	pos.CurrentStopLoss = newStopLoss

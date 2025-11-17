@@ -249,22 +249,34 @@ func extractLeverage(text string) int {
 func extractStopLoss(text string) float64 {
 	// Look for stop-loss patterns (supports Markdown formatting like ** and various price formats)
 	// 查找止损模式（支持 Markdown 格式如 ** 和各种价格格式）
+	// ⚠️  Order matters! More specific patterns must come first
+	// ⚠️  顺序很重要！更具体的模式必须放在前面
 	patterns := []string{
-		`\*{0,2}止损[价格价位]*\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,      // 止损: $154.50 or **止损**: 154.50
-		`\*{0,2}初始止损\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,           // **初始止损**: $154.50
-		`\*{0,2}stop[-\s]?loss\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`, // stop-loss: $100
-		`\*{0,2}止损价\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,            // 止损价: 154.50
-		`\*{0,2}止损点\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,            // 止损点: 154.50
+		`\*{0,2}止损价格\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,                   // **止损价格**: $3179.77 (最具体，优先匹配)
+		`\*{0,2}止损价\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,                    // **止损价**: 154.50
+		`\*{0,2}止损点\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,                    // **止损点**: 154.50
+		`\*{0,2}初始止损\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,                   // **初始止损**: $154.50
+		`\*{0,2}stop[-\s]?loss\s*price\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`, // stop-loss price: $100
+		`\*{0,2}stop[-\s]?loss\*{0,2}[：:\s]*\$?\s*([0-9,.]+)`,         // stop-loss: $100
+		// ⚠️  Do NOT add generic "止损" pattern here as it will match "止损调整理由", "止损理由" etc.
+		// ⚠️  不要在此添加宽泛的 "止损" 模式，因为它会匹配 "止损调整理由"、"止损理由" 等
 	}
 
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
 		matches := re.FindStringSubmatch(text)
 		if len(matches) > 1 {
-			// Clean the matched string (remove commas and dollar signs)
-			// 清理匹配的字符串（移除逗号和美元符号）
+			// Clean the matched string (remove commas, dollar signs, and brackets)
+			// 清理匹配的字符串（移除逗号、美元符号和方括号）
 			priceStr := strings.ReplaceAll(matches[1], ",", "")
 			priceStr = strings.ReplaceAll(priceStr, "$", "")
+			// Extract number before brackets if present (e.g., "3179.77[保持]" -> "3179.77")
+			// 如果存在方括号，提取括号前的数字（例如 "3179.77[保持]" -> "3179.77"）
+			if idx := strings.Index(priceStr, "["); idx > 0 {
+				priceStr = priceStr[:idx]
+			}
+			priceStr = strings.TrimSpace(priceStr)
+
 			var stopLoss float64
 			if _, err := fmt.Sscanf(priceStr, "%f", &stopLoss); err == nil && stopLoss > 0 {
 				return stopLoss

@@ -353,12 +353,12 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				}
 
 				// Order book - use enhanced format
-				orderBook, err := marketData.GetOrderBook(ctx, binanceSymbol, 20)
+				orderBook, err := marketData.GetOrderBook(ctx, binanceSymbol, 50)
 				if err != nil {
 					reportBuilder.WriteString(fmt.Sprintf("订单簿获取失败: %v\n\n", err))
 				} else {
 					// Use the new formatted order book report
-					orderBookReport := dataflows.FormatOrderBookReport(orderBook, 10)
+					orderBookReport := dataflows.FormatOrderBookReport(orderBook, 20)
 					reportBuilder.WriteString(orderBookReport)
 					reportBuilder.WriteString("\n")
 				}
