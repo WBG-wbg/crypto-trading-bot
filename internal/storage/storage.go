@@ -936,3 +936,148 @@ func (s *Storage) GetStopLossEvents(positionID string) ([]*StopLossEvent, error)
 
 	return events, rows.Err()
 }
+
+// GetTotalSessionCount retrieves the total number of trading sessions
+// GetTotalSessionCount 获取交易会话总数
+func (s *Storage) GetTotalSessionCount() (int, error) {
+	var count int
+	query := "SELECT COUNT(*) FROM trading_sessions"
+	err := s.db.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count sessions: %w", err)
+	}
+	return count, nil
+}
+
+// GetTotalBatchCount retrieves the total number of unique batches
+// GetTotalBatchCount 获取唯一批次总数
+func (s *Storage) GetTotalBatchCount() (int, error) {
+	var count int
+	query := "SELECT COUNT(DISTINCT batch_id) FROM trading_sessions"
+	err := s.db.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count batches: %w", err)
+	}
+	return count, nil
+}
+
+// GetBatchesWithPagination retrieves batches with pagination support
+// GetBatchesWithPagination 支持分页的批次获取
+func (s *Storage) GetBatchesWithPagination(offset, limit int) ([]*BatchSession, error) {
+	// Get unique batch_ids with pagination
+	// 获取唯一的 batch_id 并分页
+	batchQuery := `
+	SELECT DISTINCT t1.batch_id, t1.created_at, t1.timeframe
+	FROM trading_sessions t1
+	INNER JOIN (
+		SELECT batch_id, MIN(id) as min_id
+		FROM trading_sessions
+		GROUP BY batch_id
+	) t2 ON t1.batch_id = t2.batch_id AND t1.id = t2.min_id
+	ORDER BY t1.created_at DESC
+	LIMIT ? OFFSET ?
+	`
+
+	batchRows, err := s.db.Query(batchQuery, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query batches: %w", err)
+	}
+	defer batchRows.Close()
+
+	var batches []*BatchSession
+	var batchIDs []string
+
+	// Collect batch metadata
+	// 收集批次元数据
+	for batchRows.Next() {
+		batch := &BatchSession{}
+		err := batchRows.Scan(&batch.BatchID, &batch.CreatedAt, &batch.Timeframe)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan batch: %w", err)
+		}
+		batches = append(batches, batch)
+		batchIDs = append(batchIDs, batch.BatchID)
+	}
+
+	if err := batchRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// If no batches found, return empty result
+	// 如果没有找到批次，返回空结果
+	if len(batchIDs) == 0 {
+		return batches, nil
+	}
+
+	// Build placeholders for IN clause
+	// 构建 IN 子句的占位符
+	placeholders := ""
+	for i := range batchIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+	}
+
+	// Get all sessions for these batches
+	// 获取这些批次的所有会话
+	sessionsQuery := fmt.Sprintf(`
+	SELECT id, batch_id, symbol, timeframe, created_at,
+		   market_report, crypto_report, sentiment_report,
+		   position_info, decision, full_decision, executed, execution_result
+	FROM trading_sessions
+	WHERE batch_id IN (%s)
+	ORDER BY batch_id, symbol
+	`, placeholders)
+
+	// Convert batchIDs to []interface{} for variadic args
+	// 将 batchIDs 转换为 []interface{} 用于可变参数
+	args := make([]interface{}, len(batchIDs))
+	for i, id := range batchIDs {
+		args[i] = id
+	}
+
+	sessionRows, err := s.db.Query(sessionsQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sessions: %w", err)
+	}
+	defer sessionRows.Close()
+
+	// Group sessions by batch_id
+	// 按 batch_id 分组会话
+	sessionsByBatch := make(map[string][]*TradingSession)
+	for sessionRows.Next() {
+		session := &TradingSession{}
+		err := sessionRows.Scan(
+			&session.ID,
+			&session.BatchID,
+			&session.Symbol,
+			&session.Timeframe,
+			&session.CreatedAt,
+			&session.MarketReport,
+			&session.CryptoReport,
+			&session.SentimentReport,
+			&session.PositionInfo,
+			&session.Decision,
+			&session.FullDecision,
+			&session.Executed,
+			&session.ExecutionResult,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+		sessionsByBatch[session.BatchID] = append(sessionsByBatch[session.BatchID], session)
+	}
+
+	if err := sessionRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Assign sessions to batches
+	// 将会话分配给批次
+	for _, batch := range batches {
+		batch.Sessions = sessionsByBatch[batch.BatchID]
+	}
+
+	return batches, nil
+}

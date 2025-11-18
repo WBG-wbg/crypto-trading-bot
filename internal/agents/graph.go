@@ -372,32 +372,70 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				}
 
 				// Order book - use enhanced format
-				orderBook, err := marketData.GetOrderBook(ctx, binanceSymbol, 50)
+				//orderBook, err := marketData.GetOrderBook(ctx, binanceSymbol, 50)
+				//if err != nil {
+				//	reportBuilder.WriteString(fmt.Sprintf("订单簿获取失败: %v\n\n", err))
+				//} else {
+				//	// Use the new formatted order book report
+				//	orderBookReport := dataflows.FormatOrderBookReport(orderBook, 20)
+				//	reportBuilder.WriteString(orderBookReport)
+				//	reportBuilder.WriteString("\n")
+				//}
+
+				// 持仓量统计 - 2h、15m 间隔，突出变化序列
+				// Open Interest Change - 2h window with 15m sampling to highlight momentum
+				reportBuilder.WriteString("📊 持仓量变化统计4h:\n")
+				reportBuilder.WriteString("注意：以下数据均为从旧到新\n")
+
+				oiSeries, err := marketData.GetOpenInterestChange(ctx, binanceSymbol, "15m", 16)
 				if err != nil {
-					reportBuilder.WriteString(fmt.Sprintf("订单簿获取失败: %v\n\n", err))
+					reportBuilder.WriteString(fmt.Sprintf("  数据获取失败: %v\n\n", err))
+				} else if rawSeries, ok := oiSeries["series_values"].([]float64); ok && len(rawSeries) > 0 {
+					base := rawSeries[0]
+					parts := make([]string, 0, len(rawSeries))
+					for _, val := range rawSeries {
+						var change float64
+						if base != 0 {
+							change = ((val - base) / base) * 100
+						}
+						parts = append(parts, fmt.Sprintf("%.2f%%", change))
+					}
+					reportBuilder.WriteString(fmt.Sprintf("间隔15分钟: [%s]\n\n", strings.Join(parts, ", ")))
 				} else {
-					// Use the new formatted order book report
-					orderBookReport := dataflows.FormatOrderBookReport(orderBook, 20)
-					reportBuilder.WriteString(orderBookReport)
-					reportBuilder.WriteString("\n")
+					reportBuilder.WriteString("  数据不足，无法构建 2h 序列\n\n")
 				}
 
-				// Open Interest
-				// 未平仓合约
-				openInterest, err := marketData.GetOpenInterest(ctx, binanceSymbol)
-				if err != nil {
-					reportBuilder.WriteString(fmt.Sprintf("未平仓合约获取失败: %v\n\n", err))
-				} else {
-					reportBuilder.WriteString(fmt.Sprintf("未平仓合约: 最新: %.2f  平均: %.2f\n\n",
-						openInterest["latest"], openInterest["average"]))
-				}
+				// 大户多空比 - 2h 15m 间隔，提供序列变化
+				// Top Trader Long/Short Ratio - 2h window with 15m sampling
+				//reportBuilder.WriteString("🐋 大户持仓多空比变化统计2h:\n")
+				//
+				//ratioSeries, err := marketData.GetTopLongShortPositionRatio(ctx, binanceSymbol, "15m", 8)
+				//if err != nil {
+				//	reportBuilder.WriteString(fmt.Sprintf("  数据获取失败: %v\n\n", err))
+				//} else {
+				//	longPct := ratioSeries["long_account"].(float64)
+				//	shortPct := ratioSeries["short_account"].(float64)
+				//	lsRatio := ratioSeries["long_short_ratio"].(float64)
+				//	reportBuilder.WriteString(fmt.Sprintf("  最新: 多空比 %.2f (多头 %.1f%% vs 空头 %.1f%%)\n", lsRatio, longPct, shortPct))
+				//
+				//	if series, ok := ratioSeries["series_ratios"].([]float64); ok && len(series) > 0 {
+				//		chunks := make([]string, 0, len(series))
+				//		for _, val := range series {
+				//			chunks = append(chunks, fmt.Sprintf("%.2f", val))
+				//		}
+				//		reportBuilder.WriteString(fmt.Sprintf("  间隔15分钟: [%s]\n\n", strings.Join(chunks, ", ")))
+				//	} else {
+				//		reportBuilder.WriteString("  数据不足，无法构建 2h 序列\n\n")
+				//	}
+				//}
 
 				// 24h stats
 				stats, err := marketData.Get24HrStats(ctx, binanceSymbol)
 				if err != nil {
-					reportBuilder.WriteString(fmt.Sprintf("24h统计获取失败: %v\n", err))
+					reportBuilder.WriteString(fmt.Sprintf("📅 24h统计获取失败: %v\n", err))
 				} else {
-					reportBuilder.WriteString(fmt.Sprintf("24h统计 - 价格变化: %s%%, 最高: $%s, 最低: $%s, 成交量: %s\n",
+					reportBuilder.WriteString("📅 24h统计:\n")
+					reportBuilder.WriteString(fmt.Sprintf("- 价格变化: %s%%, 最高: $%s, 最低: $%s, 成交量: %s\n",
 						stats["price_change_percent"], stats["high_price"], stats["low_price"], stats["volume"]))
 				}
 
