@@ -8,8 +8,8 @@ An AI agent-based cryptocurrency automated trading system - **Go implementation*
 
 Uses Large Language Models (LLM) to analyze market data, generate trading signals, and execute trades on Binance Futures. Built with **Cloudwego Eino Framework** for multi-agent parallel orchestration.
 
-![Trading Bot Dashboard](assets/fig1.png)
-![LLM Decision](assets/fig2.png)
+![Trading Bot Dashboard](assets/fig5.png)
+
 
 
 > ⚠️ **Important Notice**: This project has been completely refactored from Python to Go for higher performance and better concurrency.

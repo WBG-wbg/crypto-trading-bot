@@ -8,8 +8,7 @@
 
 使用大语言模型（LLM）分析市场数据、生成交易信号并在币安期货上执行交易。采用 **Cloudwego Eino 框架**进行多智能体并行编排。
 
-![Trading Bot Dashboard](assets/fig1.png)
-![LLM Decision](assets/fig2.png)
+![Trading Bot Dashboard](assets/fig5.png)
 
 > ⚠️ **重要提示**：此项目从 Python 完全重构为 Go 版本，性能更高、并发能力更强。
 
