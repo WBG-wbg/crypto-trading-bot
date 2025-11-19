@@ -358,6 +358,118 @@ func TestParseMultiCurrencyDecision(t *testing.T) {
 	}
 }
 
+// TestParseMultiCurrencyDecision_JSON tests parsing JSON-based multi-currency decisions (map format)
+// TestParseMultiCurrencyDecision_JSON 测试解析基于 JSON 的多币种决策（map 格式）
+func TestParseMultiCurrencyDecision_JSON(t *testing.T) {
+	jsonDecision := `{
+  "BTC/USDT": {
+    "symbol": "BTC/USDT",
+    "action": "HOLD",
+    "confidence": 0.88,
+    "leverage": 25,
+    "position_size": 2.57,
+    "stop_loss": 92641.65,
+    "reasoning": "趋势未破，MACD持续上行，但订单簿卖压显著需警惕回调",
+    "risk_reward_ratio": 2.1,
+    "summary": "当前多头持仓小幅浮亏，技术面仍呈上行结构，但订单簿卖盘主导。暂持有多仓，追踪止损保护，等待价格确认突破或反转信号。",
+    "current_pnl_percent": -3.67
+  },
+  "SOL/USDT": {
+    "symbol": "SOL/USDT",
+    "action": "BUY",
+    "confidence": 0.81,
+    "leverage": 25,
+    "position_size": 2.57,
+    "stop_loss": 92641.65,
+    "reasoning": "趋势未破，MACD持续上行，但订单簿卖压显著需警惕回调",
+    "risk_reward_ratio": 2.1,
+    "summary": "当前多头持仓小幅浮亏，技术面仍呈上行结构，但订单簿卖盘主导。暂持有多仓，追踪止损保护，等待价格确认突破或反转信号。",
+    "current_pnl_percent": -3.67
+  },
+  "BNB/USDT": {
+    "symbol": "BNB/USDT",
+    "action": "BUY",
+    "confidence": 0.81,
+    "leverage": 25,
+    "position_size": 2.57,
+    "stop_loss": 92641.65,
+    "reasoning": "趋势未破，MACD持续上行，但订单簿卖压显著需警惕回调",
+    "risk_reward_ratio": 2.1,
+    "summary": "当前多头持仓小幅浮亏，技术面仍呈上行结构，但订单簿卖盘主导。暂持有多仓，追踪止损保护，等待价格确认突破或反转信号。",
+    "current_pnl_percent": -3.67
+  },
+  "ETH/USDT": {
+    "symbol": "ETH/USDT",
+    "action": "HOLD",
+    "confidence": 0.88,
+    "leverage": 12,
+    "position_size": 8.0,
+    "stop_loss": 3100.00,
+    "reasoning": "趋势延续但未创新高",
+    "risk_reward_ratio": 2.8,
+    "summary": "空头趋势保持，价格在区间震荡未创新低，止损保持不变，继续观察",
+    "current_pnl_percent": 5.2
+  }
+}`
+
+	symbols := []string{"BTC/USDT", "SOL/USDT", "BNB/USDT", "ETH/USDT", "XRP/USDT"}
+	decisions := ParseMultiCurrencyDecision(jsonDecision, symbols)
+
+	// BTC/USDT: HOLD
+	if btc, ok := decisions["BTC/USDT"]; !ok {
+		t.Error("BTC/USDT decision not found")
+	} else {
+		if btc.Action != executors.ActionHold {
+			t.Errorf("BTC/USDT: expected HOLD, got %v", btc.Action)
+		}
+		if !btc.Valid {
+			t.Errorf("BTC/USDT decision should be valid")
+		}
+	}
+
+	// SOL/USDT: BUY
+	if sol, ok := decisions["SOL/USDT"]; !ok {
+		t.Error("SOL/USDT decision not found")
+	} else {
+		if sol.Action != executors.ActionBuy {
+			t.Errorf("SOL/USDT: expected BUY, got %v", sol.Action)
+		}
+		if sol.PositionSizePercent <= 0 {
+			t.Errorf("SOL/USDT: expected positive position size, got %v", sol.PositionSizePercent)
+		}
+	}
+
+	// BNB/USDT: BUY
+	if bnb, ok := decisions["BNB/USDT"]; !ok {
+		t.Error("BNB/USDT decision not found")
+	} else {
+		if bnb.Action != executors.ActionBuy {
+			t.Errorf("BNB/USDT: expected BUY, got %v", bnb.Action)
+		}
+	}
+
+	// ETH/USDT: HOLD
+	if eth, ok := decisions["ETH/USDT"]; !ok {
+		t.Error("ETH/USDT decision not found")
+	} else {
+		if eth.Action != executors.ActionHold {
+			t.Errorf("ETH/USDT: expected HOLD, got %v", eth.Action)
+		}
+	}
+
+	// XRP/USDT: not present in JSON, should default to HOLD
+	if xrp, ok := decisions["XRP/USDT"]; !ok {
+		t.Error("XRP/USDT decision not found")
+	} else {
+		if xrp.Action != executors.ActionHold {
+			t.Errorf("XRP/USDT: expected default HOLD, got %v", xrp.Action)
+		}
+		if !xrp.Valid {
+			t.Errorf("XRP/USDT default decision should be valid")
+		}
+	}
+}
+
 // TestRealWorldDecision tests with actual LLM output from the user's issue
 // TestRealWorldDecision 使用用户实际问题中的 LLM 输出进行测试
 func TestRealWorldDecision(t *testing.T) {

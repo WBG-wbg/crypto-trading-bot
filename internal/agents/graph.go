@@ -3,13 +3,16 @@ package agents
 import (
 	"context"
 	"fmt"
+	"github.com/bytedance/sonic"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
 	openaiComponent "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/eino-contrib/jsonschema"
 	"github.com/oak/crypto-trading-bot/internal/config"
 	"github.com/oak/crypto-trading-bot/internal/dataflows"
 	"github.com/oak/crypto-trading-bot/internal/executors"
@@ -26,6 +29,23 @@ type SymbolReports struct {
 	PositionInfo        string
 	OHLCVData           []dataflows.OHLCV
 	TechnicalIndicators *dataflows.TechnicalIndicators
+}
+
+// TradeDecision represents a structured trading decision from LLM (for JSON Schema output)
+// TradeDecision 表示 LLM 的结构化交易决策（用于 JSON Schema 输出）
+type TradeDecision struct {
+	Symbol            string   `json:"symbol"`                        // 交易对 / Trading pair
+	Action            string   `json:"action"`                        // 交易动作 / Action: BUY|SELL|HOLD|CLOSE_LONG|CLOSE_SHORT
+	Confidence        float64  `json:"confidence"`                    // 置信度 / Confidence (0.00-1.00)
+	Leverage          int      `json:"leverage"`                      // 杠杆倍数 / Leverage multiplier
+	PositionSize      float64  `json:"position_size"`                 // 建议仓位百分比 / Position size percentage (0-100)
+	StopLoss          float64  `json:"stop_loss"`                     // 止损价格 / Stop loss price
+	Reasoning         string   `json:"reasoning"`                     // 交易理由 / Trading reasoning
+	RiskRewardRatio   float64  `json:"risk_reward_ratio"`             // 预期盈亏比 / Risk/reward ratio
+	Summary           string   `json:"summary"`                       // 总结 / Summary
+	CurrentPnlPercent *float64 `json:"current_pnl_percent,omitempty"` // 当前盈亏% (仅HOLD) / Current PnL% (HOLD only)
+	NewStopLoss       *float64 `json:"new_stop_loss,omitempty"`       // 新止损价格 (仅HOLD调整时) / New stop loss (HOLD adjustment only)
+	StopLossReason    *string  `json:"stop_loss_reason,omitempty"`    // 止损调整理由 (仅HOLD调整时) / Stop loss reason (HOLD adjustment only)
 }
 
 // AgentState holds the state of all analysts' reports for multiple symbols
@@ -353,32 +373,70 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				}
 
 				// Order book - use enhanced format
-				orderBook, err := marketData.GetOrderBook(ctx, binanceSymbol, 50)
+				//orderBook, err := marketData.GetOrderBook(ctx, binanceSymbol, 50)
+				//if err != nil {
+				//	reportBuilder.WriteString(fmt.Sprintf("订单簿获取失败: %v\n\n", err))
+				//} else {
+				//	// Use the new formatted order book report
+				//	orderBookReport := dataflows.FormatOrderBookReport(orderBook, 20)
+				//	reportBuilder.WriteString(orderBookReport)
+				//	reportBuilder.WriteString("\n")
+				//}
+
+				// 持仓量统计 - 2h、15m 间隔，突出变化序列
+				// Open Interest Change - 2h window with 15m sampling to highlight momentum
+				reportBuilder.WriteString("📊 持仓量变化统计4h:\n")
+				reportBuilder.WriteString("注意：以下数据均为从旧到新\n")
+
+				oiSeries, err := marketData.GetOpenInterestChange(ctx, binanceSymbol, "15m", 16)
 				if err != nil {
-					reportBuilder.WriteString(fmt.Sprintf("订单簿获取失败: %v\n\n", err))
+					reportBuilder.WriteString(fmt.Sprintf("  数据获取失败: %v\n\n", err))
+				} else if rawSeries, ok := oiSeries["series_values"].([]float64); ok && len(rawSeries) > 0 {
+					base := rawSeries[0]
+					parts := make([]string, 0, len(rawSeries))
+					for _, val := range rawSeries {
+						var change float64
+						if base != 0 {
+							change = ((val - base) / base) * 100
+						}
+						parts = append(parts, fmt.Sprintf("%.2f%%", change))
+					}
+					reportBuilder.WriteString(fmt.Sprintf("间隔15分钟: [%s]\n\n", strings.Join(parts, ", ")))
 				} else {
-					// Use the new formatted order book report
-					orderBookReport := dataflows.FormatOrderBookReport(orderBook, 20)
-					reportBuilder.WriteString(orderBookReport)
-					reportBuilder.WriteString("\n")
+					reportBuilder.WriteString("  数据不足，无法构建 2h 序列\n\n")
 				}
 
-				// Open Interest
-				// 未平仓合约
-				openInterest, err := marketData.GetOpenInterest(ctx, binanceSymbol)
-				if err != nil {
-					reportBuilder.WriteString(fmt.Sprintf("未平仓合约获取失败: %v\n\n", err))
-				} else {
-					reportBuilder.WriteString(fmt.Sprintf("未平仓合约: 最新: %.2f  平均: %.2f\n\n",
-						openInterest["latest"], openInterest["average"]))
-				}
+				// 大户多空比 - 2h 15m 间隔，提供序列变化
+				// Top Trader Long/Short Ratio - 2h window with 15m sampling
+				//reportBuilder.WriteString("🐋 大户持仓多空比变化统计2h:\n")
+				//
+				//ratioSeries, err := marketData.GetTopLongShortPositionRatio(ctx, binanceSymbol, "15m", 8)
+				//if err != nil {
+				//	reportBuilder.WriteString(fmt.Sprintf("  数据获取失败: %v\n\n", err))
+				//} else {
+				//	longPct := ratioSeries["long_account"].(float64)
+				//	shortPct := ratioSeries["short_account"].(float64)
+				//	lsRatio := ratioSeries["long_short_ratio"].(float64)
+				//	reportBuilder.WriteString(fmt.Sprintf("  最新: 多空比 %.2f (多头 %.1f%% vs 空头 %.1f%%)\n", lsRatio, longPct, shortPct))
+				//
+				//	if series, ok := ratioSeries["series_ratios"].([]float64); ok && len(series) > 0 {
+				//		chunks := make([]string, 0, len(series))
+				//		for _, val := range series {
+				//			chunks = append(chunks, fmt.Sprintf("%.2f", val))
+				//		}
+				//		reportBuilder.WriteString(fmt.Sprintf("  间隔15分钟: [%s]\n\n", strings.Join(chunks, ", ")))
+				//	} else {
+				//		reportBuilder.WriteString("  数据不足，无法构建 2h 序列\n\n")
+				//	}
+				//}
 
 				// 24h stats
 				stats, err := marketData.Get24HrStats(ctx, binanceSymbol)
 				if err != nil {
-					reportBuilder.WriteString(fmt.Sprintf("24h统计获取失败: %v\n", err))
+					reportBuilder.WriteString(fmt.Sprintf("📅 24h统计获取失败: %v\n", err))
 				} else {
-					reportBuilder.WriteString(fmt.Sprintf("24h统计 - 价格变化: %s%%, 最高: $%s, 最低: $%s, 成交量: %s\n",
+					reportBuilder.WriteString("📅 24h统计:\n")
+					reportBuilder.WriteString(fmt.Sprintf("- 价格变化: %s%%, 最高: $%s, 最低: $%s, 成交量: %s\n",
 						stats["price_change_percent"], stats["high_price"], stats["low_price"], stats["volume"]))
 				}
 
@@ -649,16 +707,59 @@ func (g *SimpleTradingGraph) makeSimpleDecision() string {
 	return decision.String()
 }
 
-// makeLLMDecision uses LLM to generate trading decision
+// makeLLMDecision uses LLM to generate trading decision with JSON structured output
+// makeLLMDecision 使用 LLM 生成交易决策，使用 JSON 结构化输出
 func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error) {
-	// Create OpenAI config
-	cfg := &openaiComponent.ChatModelConfig{
-		APIKey:  g.config.APIKey,
-		BaseURL: g.config.BackendURL,
-		Model:   g.config.QuickThinkLLM,
+	// Detect if model is Qwen-based (doesn't support full JSON Schema)
+	// 检测是否是 Qwen 模型（不支持完整的 JSON Schema）
+	isQwenModel := strings.Contains(strings.ToLower(g.config.QuickThinkLLM), "qwen")
+
+	var cfg *openaiComponent.ChatModelConfig
+
+	if isQwenModel {
+		// Qwen models: use basic JSON Object mode (no schema)
+		// Qwen 模型：使用基础 JSON Object 模式（无 schema）
+		g.logger.Info("检测到 Qwen 模型，使用 JSON Object 模式（基础模式）")
+		cfg = &openaiComponent.ChatModelConfig{
+			APIKey:  g.config.APIKey,
+			BaseURL: g.config.BackendURL,
+			Model:   g.config.QuickThinkLLM,
+			// Enable basic JSON mode (Qwen compatible)
+			// 启用基础 JSON 模式（Qwen 兼容）
+			ResponseFormat: &openaiComponent.ChatCompletionResponseFormat{
+				Type: openaiComponent.ChatCompletionResponseFormatTypeJSONObject,
+			},
+		}
+	} else {
+		// OpenAI-compatible models: use JSON Schema mode
+		// OpenAI 兼容模型：使用 JSON Schema 模式
+		g.logger.Info("使用 OpenAI 兼容模式，启用 JSON Schema 多币种结构化输出")
+
+		// Generate JSON Schema for multi-symbol trade decisions: map[symbol]TradeDecision
+		// 使用反射为多币种决策生成 JSON Schema：map[交易对]TradeDecision
+		var multiDecision map[string]TradeDecision
+		jsonSchemaObj := jsonschema.Reflect(multiDecision)
+
+		cfg = &openaiComponent.ChatModelConfig{
+			APIKey:  g.config.APIKey,
+			BaseURL: g.config.BackendURL,
+			Model:   g.config.QuickThinkLLM,
+			// Enable JSON Schema structured output
+			// 启用 JSON Schema 结构化输出
+			ResponseFormat: &openaiComponent.ChatCompletionResponseFormat{
+				Type: openaiComponent.ChatCompletionResponseFormatTypeJSONSchema,
+				JSONSchema: &openaiComponent.ChatCompletionResponseFormatJSONSchema{
+					Name:        "trade_decision",
+					Description: "加密货币交易决策结构化输出",
+					JSONSchema:  jsonSchemaObj, // 使用 JSONSchema 字段而不是 Schema
+					Strict:      false,         // eino-contrib/jsonschema 生成的 Schema 可能不完全兼容 strict 模式
+				},
+			},
+		}
 	}
 
 	// Create ChatModel
+	// 创建 ChatModel
 	chatModel, err := openaiComponent.NewChatModel(ctx, cfg)
 	if err != nil {
 		g.logger.Warning(fmt.Sprintf("LLM 初始化失败，使用简单规则决策: %v", err))
@@ -666,6 +767,7 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 	}
 
 	// Prepare the prompt with all reports
+	// 准备包含所有报告的 Prompt
 	allReports := g.state.GetAllReports()
 
 	// Load system prompt from file or use default
@@ -700,13 +802,19 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 请给出你的分析和最终决策。`, leverageInfo, klineInfo, allReports)
 
 	// Create messages
+	// 创建消息
 	messages := []*schema.Message{
 		schema.SystemMessage(systemPrompt),
 		schema.UserMessage(userPrompt),
 	}
 
 	// Call LLM
-	g.logger.Info(fmt.Sprintf("🤖 正在调用 LLM 生成交易决策, 使用的模型:%v", g.config.QuickThinkLLM))
+	// 调用 LLM
+	modeStr := "JSON Schema"
+	if isQwenModel {
+		modeStr = "JSON Object（Qwen 兼容）"
+	}
+	g.logger.Info(fmt.Sprintf("🤖 正在调用 LLM 生成交易决策 (%s 模式), 使用的模型:%v", modeStr, g.config.QuickThinkLLM))
 	response, err := chatModel.Generate(ctx, messages)
 	if err != nil {
 		g.logger.Warning(fmt.Sprintf("LLM 调用失败，使用简单规则决策: %v", err))
@@ -716,6 +824,7 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 	g.logger.Success("✅ LLM 决策生成完成")
 
 	// Log token usage if available
+	// 记录 token 使用情况
 	if response.ResponseMeta != nil && response.ResponseMeta.Usage != nil {
 		g.logger.Info(fmt.Sprintf("Token 使用: %d (输入: %d, 输出: %d)",
 			response.ResponseMeta.Usage.TotalTokens,
@@ -723,6 +832,59 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 			response.ResponseMeta.Usage.CompletionTokens))
 	}
 
+	// Parse JSON response (support both multi-symbol map and single-object formats)
+	// 解析 JSON 响应（支持多币种映射和单对象两种格式）
+	var sample TradeDecision
+	parsed := false
+
+	cleanContent := extractJSONPayload(response.Content)
+	trimmed := strings.TrimSpace(cleanContent)
+
+	// Try multi-symbol format: map[string]TradeDecision
+	// 优先尝试多币种格式：map[string]TradeDecision
+	var multi map[string]TradeDecision
+	if err := sonic.Unmarshal([]byte(trimmed), &multi); err == nil && len(multi) > 0 {
+		for sym, d := range multi {
+			sample = d
+			// If symbol field is empty, use map key as fallback
+			// 如果结构体中未填 symbol，则使用 map 的键作为回退
+			if sample.Symbol == "" {
+				sample.Symbol = sym
+			}
+			parsed = true
+			break
+		}
+	} else {
+		// Fallback: single-object format
+		// 回退到单对象格式
+		var single TradeDecision
+		if err := sonic.Unmarshal([]byte(trimmed), &single); err == nil {
+			sample = single
+			parsed = true
+		}
+	}
+
+	if !parsed {
+		g.logger.Warning(fmt.Sprintf("JSON 解析失败，原始响应: %s", response.Content))
+		g.logger.Warning("降级到简单规则决策")
+		return g.makeSimpleDecision(), nil
+	}
+
+	// Validate required fields on sample decision
+	// 对示例决策验证必填字段
+	if strings.TrimSpace(sample.Action) == "" || strings.TrimSpace(sample.Symbol) == "" {
+		g.logger.Warning(fmt.Sprintf("LLM 返回的 JSON 缺少必填字段 (action或symbol为空)，示例: %+v", sample))
+		return g.makeSimpleDecision(), nil
+	}
+
+	// Log parsed decision info
+	// 记录解析后的示例决策信息
+	g.logger.Info(fmt.Sprintf("📊 示例决策: Symbol=%s, Action=%s, Confidence=%.2f, Leverage=%d",
+		sample.Symbol, sample.Action, sample.Confidence, sample.Leverage))
+
+	// Return both JSON and formatted text for backward compatibility
+	// 为了向后兼容，返回 JSON 原文（也可以格式化为文本）
+	// TODO: 可以选择格式化为可读文本，或直接返回 JSON 供后续处理
 	return response.Content, nil
 }
 
@@ -752,4 +914,21 @@ func (g *SimpleTradingGraph) Run(ctx context.Context) (map[string]any, error) {
 // GetState returns the current agent state
 func (g *SimpleTradingGraph) GetState() *AgentState {
 	return g.state
+}
+
+// extractJSONPayload tries to extract pure JSON content from Markdown or verbose responses
+// extractJSONPayload 尝试从 Markdown 或含额外内容的响应中提取纯 JSON 内容
+func extractJSONPayload(content string) string {
+	trimmed := strings.TrimSpace(content)
+
+	if strings.HasPrefix(trimmed, "```") {
+		// Regex captures the JSON block inside ```json ... ``` fences
+		// 正则用于捕获 ```json ... ``` 中的 JSON 内容
+		re := regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*\\})\\s*```")
+		if matches := re.FindStringSubmatch(trimmed); len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	return content
 }

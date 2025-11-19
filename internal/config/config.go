@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"github.com/oak/crypto-trading-bot/internal/constant"
 	"github.com/spf13/viper"
@@ -368,6 +370,107 @@ func (c *Config) Validate() error {
 
 	// PositionSize validation removed - now relies on LLM's position size recommendation
 	// 移除 PositionSize 验证 - 现在依赖 LLM 的仓位建议
+
+	return nil
+}
+
+// SaveToEnv updates specific key-value pairs in the .env file
+// SaveToEnv 更新 .env 文件中的特定键值对
+func SaveToEnv(envPath string, updates map[string]string) error {
+	// Default to .env if not specified
+	// 如果未指定，默认为 .env
+	if envPath == "" {
+		envPath = ".env"
+	}
+
+	// Read the existing .env file
+	// 读取现有的 .env 文件
+	file, err := os.Open(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If file doesn't exist, create a new one
+			// 如果文件不存在，创建一个新文件
+			return createNewEnvFile(envPath, updates)
+		}
+		return fmt.Errorf("failed to open .env file: %w", err)
+	}
+	defer file.Close()
+
+	// Parse the file line by line
+	// 逐行解析文件
+	var buffer bytes.Buffer
+	scanner := bufio.NewScanner(file)
+	updatedKeys := make(map[string]bool)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		// Skip empty lines and comments, but preserve them
+		// 跳过空行和注释，但保留它们
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			buffer.WriteString(line + "\n")
+			continue
+		}
+
+		// Parse key=value
+		// 解析 key=value
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			buffer.WriteString(line + "\n")
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+
+		// Check if this key needs to be updated
+		// 检查此键是否需要更新
+		if newValue, exists := updates[key]; exists {
+			buffer.WriteString(fmt.Sprintf("%s=%s\n", key, newValue))
+			updatedKeys[key] = true
+		} else {
+			buffer.WriteString(line + "\n")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read .env file: %w", err)
+	}
+
+	// Append any new keys that weren't in the original file
+	// 添加原文件中不存在的新键
+	for key, value := range updates {
+		if !updatedKeys[key] {
+			buffer.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+		}
+	}
+
+	// Write the updated content back to the file
+	// 将更新后的内容写回文件
+	err = os.WriteFile(envPath, buffer.Bytes(), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write .env file: %w", err)
+	}
+
+	return nil
+}
+
+// createNewEnvFile creates a new .env file with the given key-value pairs
+// createNewEnvFile 使用给定的键值对创建新的 .env 文件
+func createNewEnvFile(envPath string, data map[string]string) error {
+	var buffer bytes.Buffer
+
+	buffer.WriteString("# Auto-generated .env file\n")
+	buffer.WriteString("# 自动生成的 .env 文件\n\n")
+
+	for key, value := range data {
+		buffer.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+	}
+
+	err := os.WriteFile(envPath, buffer.Bytes(), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to create .env file: %w", err)
+	}
 
 	return nil
 }

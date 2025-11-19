@@ -2,8 +2,8 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/bytedance/sonic"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/oak/crypto-trading-bot/internal/config"
@@ -51,7 +51,7 @@ func (t *MarketDataTool) InvokableRun(ctx context.Context, argumentsInJSON strin
 		Timeframe string `json:"timeframe,omitempty"`
 	}
 
-	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
+	if err := sonic.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func (t *CryptoDataTool) InvokableRun(ctx context.Context, argumentsInJSON strin
 		DataType string `json:"data_type"`
 	}
 
-	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
+	if err := sonic.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
@@ -183,7 +183,7 @@ func (t *SentimentTool) InvokableRun(ctx context.Context, argumentsInJSON string
 		Symbol string `json:"symbol"`
 	}
 
-	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
+	if err := sonic.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
