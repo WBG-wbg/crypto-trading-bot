@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/bytedance/sonic"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -836,7 +837,8 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 	var sample TradeDecision
 	parsed := false
 
-	trimmed := strings.TrimSpace(response.Content)
+	cleanContent := extractJSONPayload(response.Content)
+	trimmed := strings.TrimSpace(cleanContent)
 
 	// Try multi-symbol format: map[string]TradeDecision
 	// 优先尝试多币种格式：map[string]TradeDecision
@@ -912,4 +914,21 @@ func (g *SimpleTradingGraph) Run(ctx context.Context) (map[string]any, error) {
 // GetState returns the current agent state
 func (g *SimpleTradingGraph) GetState() *AgentState {
 	return g.state
+}
+
+// extractJSONPayload tries to extract pure JSON content from Markdown or verbose responses
+// extractJSONPayload 尝试从 Markdown 或含额外内容的响应中提取纯 JSON 内容
+func extractJSONPayload(content string) string {
+	trimmed := strings.TrimSpace(content)
+
+	if strings.HasPrefix(trimmed, "```") {
+		// Regex captures the JSON block inside ```json ... ``` fences
+		// 正则用于捕获 ```json ... ``` 中的 JSON 内容
+		re := regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*\\})\\s*```")
+		if matches := re.FindStringSubmatch(trimmed); len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	return content
 }
