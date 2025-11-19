@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -370,6 +371,16 @@ func ValidateDecision(decision *TradingDecision, currentPosition *executors.Posi
 func ParseMultiCurrencyDecision(decisionText string, symbols []string) map[string]*TradingDecision {
 	decisions := make(map[string]*TradingDecision)
 
+	trimmed := strings.TrimSpace(decisionText)
+
+	// First, try to parse structured JSON decisions (multi-symbol or single-symbol)
+	// 首先尝试解析结构化 JSON 决策（多币种或单币种）
+	if strings.HasPrefix(trimmed, "{") {
+		if jsonDecisions := parseJSONMultiCurrencyDecision(trimmed, symbols); jsonDecisions != nil {
+			return jsonDecisions
+		}
+	}
+
 	// Extract only the "最终决策" section to avoid parsing analysis text
 	// 只提取"最终决策"部分以避免解析分析文本
 	finalDecisionSection := extractFinalDecisionSection(decisionText)
@@ -425,6 +436,114 @@ func ParseMultiCurrencyDecision(decisionText string, symbols []string) map[strin
 	}
 
 	return decisions
+}
+
+// parseJSONMultiCurrencyDecision parses JSON-based decisions for multiple symbols
+// parseJSONMultiCurrencyDecision 解析基于 JSON 的多币种决策
+func parseJSONMultiCurrencyDecision(jsonText string, symbols []string) map[string]*TradingDecision {
+	decisions := make(map[string]*TradingDecision)
+
+	// Try to parse as map[string]TradeDecision (multi-symbol format, e.g. test.json)
+	// 尝试解析为 map[string]TradeDecision（多币种格式，例如 test.json）
+	var multi map[string]TradeDecision
+	if err := json.Unmarshal([]byte(jsonText), &multi); err == nil && len(multi) > 0 {
+		for _, symbol := range symbols {
+			if td, ok := multi[symbol]; ok {
+				decisions[symbol] = convertTradeDecisionToTradingDecision(&td)
+			} else {
+				// If symbol not present in JSON, default to HOLD
+				// 如果 JSON 中没有该交易对，默认观望
+				decisions[symbol] = &TradingDecision{
+					Symbol:     symbol,
+					Action:     executors.ActionHold,
+					Confidence: 0.5,
+					Reason:     "JSON 中未提供该交易对决策，默认观望",
+					Valid:      true,
+				}
+			}
+		}
+		return decisions
+	}
+
+	// Try to parse as single TradeDecision object
+	// 尝试解析为单个 TradeDecision 对象
+	var single TradeDecision
+	if err := json.Unmarshal([]byte(jsonText), &single); err == nil && single.Symbol != "" {
+		singleDecision := convertTradeDecisionToTradingDecision(&single)
+		for _, symbol := range symbols {
+			if symbol == single.Symbol {
+				decisions[symbol] = singleDecision
+			} else {
+				// Symbols not mentioned default to HOLD
+				// 未被提及的交易对默认观望
+				decisions[symbol] = &TradingDecision{
+					Symbol:     symbol,
+					Action:     executors.ActionHold,
+					Confidence: 0.5,
+					Reason:     "JSON 中未提及该交易对，默认观望",
+					Valid:      true,
+				}
+			}
+		}
+		return decisions
+	}
+
+	// JSON parsing failed, fall back to text-based parsing
+	// JSON 解析失败，回退到基于文本的解析
+	return nil
+}
+
+// convertTradeDecisionToTradingDecision converts JSON TradeDecision into internal TradingDecision
+// convertTradeDecisionToTradingDecision 将 JSON TradeDecision 转换为内部 TradingDecision
+func convertTradeDecisionToTradingDecision(td *TradeDecision) *TradingDecision {
+	if td == nil {
+		return &TradingDecision{
+			Valid:  false,
+			Reason: "空的 JSON 决策对象",
+		}
+	}
+
+	actionStr := strings.ToLower(strings.TrimSpace(td.Action))
+	tradeAction := mapToTradeAction(actionStr)
+
+	// Determine stop-loss to use
+	// 决定应使用的止损价格
+	stopLoss := td.StopLoss
+	// For HOLD, prefer new_stop_loss if provided
+	// 对于 HOLD，如提供了 new_stop_loss，则优先使用
+	if strings.EqualFold(td.Action, "HOLD") && td.NewStopLoss != nil && *td.NewStopLoss > 0 {
+		stopLoss = *td.NewStopLoss
+	}
+
+	// Build reason string, prefer stop-loss specific reason if available
+	// 构建理由字符串，如有止损调整理由则优先使用
+	reason := strings.TrimSpace(td.Reasoning)
+	if td.StopLossReason != nil && strings.TrimSpace(*td.StopLossReason) != "" {
+		reason = strings.TrimSpace(*td.StopLossReason)
+	}
+	if reason == "" {
+		reason = strings.TrimSpace(td.Summary)
+	}
+
+	decision := &TradingDecision{
+		Symbol:              td.Symbol,
+		Action:              tradeAction,
+		Confidence:          td.Confidence,
+		Leverage:            td.Leverage,
+		Reason:              reason,
+		StopLoss:            stopLoss,
+		PositionSizePercent: td.PositionSize,
+		Valid:               true,
+	}
+
+	// If action is unknown, mark as invalid but keep parsed context
+	// 如果动作未知，则标记为无效，但保留已解析的上下文信息
+	if tradeAction == "" {
+		decision.Valid = false
+		decision.Reason = fmt.Sprintf("未知的 JSON 交易动作: %s", td.Action)
+	}
+
+	return decision
 }
 
 // extractFinalDecisionSection extracts only the final decision section from LLM output

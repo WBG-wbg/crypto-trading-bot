@@ -31,6 +31,19 @@
 - **优势**：纪律性强、心理压力小、给趋势足够延续空间
 - **劣势**：无法通过移动止损锁定利润、无法根据市场变化调整风险
 
+### 4. `trader_json.txt` (JSON 结构化多币种决策)
+**交易风格**：多币种同时分析，直接输出 JSON 决策  
+- 输出顶层为 `{ "BTC/USDT": {...}, "ETH/USDT": {...} }` 的 JSON 对象  
+- 每个交易对 value 是结构化决策（方向、置信度、仓位、止损、止盈等字段）  
+- 适合需要端到端调试 LLM JSON 输出、并由程序自动解析执行的场景  
+
+### 5. `trader_nof1.txt` (Hyperliquid 单信号 JSON 策略)
+**交易风格**：在 Hyperliquid 上做中低频永续合约交易，每次只输出单一交易信号  
+- 资产范围：BTC/ETH/SOL/BNB/DOGE/XRP 永续合约  
+- 明确 4 种动作：`buy_to_enter` / `sell_to_enter` / `hold` / `close`  
+- 强制给出：`profit_target`、`stop_loss`、`invalidation_condition`、`confidence`、`risk_usd`  
+- 输出为单一 JSON 对象，字段包括 `signal/coin/quantity/leverage/...`，适合 Hyperliquid 机器人直接消费  
+
 **与 `trader_system.txt` 的区别**：
 | 特性 | trader_system.txt (动态止损) | trader_fixed_stoploss.txt (固定止损) |
 |------|----------------------------|----------------------------------|
@@ -53,6 +66,15 @@ TRADER_PROMPT_PATH=prompts/trader_system.txt
 
 # 或使用固定止损策略（适合佛系交易者）
 # TRADER_PROMPT_PATH=prompts/trader_fixed_stoploss.txt
+
+# 或使用 JSON 结构化多币种决策（端到端调试专用）
+# TRADER_PROMPT_PATH=prompts/trader_json.txt
+
+# 或使用 Hyperliquid 单信号 JSON 策略（适配 Hyperliquid 永续合约环境）
+# TRADER_PROMPT_PATH=prompts/trader_nof1.txt
+
+# 或使用 JSON 结构化决策策略（多币种 JSON 输出，适合端到端调试）
+# TRADER_PROMPT_PATH=prompts/trader_json.txt
 ```
 
 ### 方法 2：创建自己的 Prompt

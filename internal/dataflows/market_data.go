@@ -792,6 +792,109 @@ func (m *MarketData) GetOpenInterest(ctx context.Context, symbol string) (map[st
 	return result, nil
 }
 
+// GetTopLongShortPositionRatio 获取大户持仓多空比（支持 1h 和 4h 周期）
+// GetTopLongShortPositionRatio gets top trader long/short position ratio for specified period
+func (m *MarketData) GetTopLongShortPositionRatio(ctx context.Context, symbol string, period string, limit int) (map[string]interface{}, error) {
+	ratios, err := m.client.NewTopLongShortPositionRatioService().
+		Symbol(symbol).
+		Period(period).
+		Limit(uint32(limit)).
+		Do(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch top long/short position ratio: %w", err)
+	}
+
+	if len(ratios) == 0 {
+		return nil, fmt.Errorf("no data returned for top long/short position ratio")
+	}
+
+	// Prepare series data (oldest to newest for better readability)
+	// 准备序列数据（按时间从旧到新，便于阅读）
+	seriesRatios := make([]float64, 0, len(ratios))
+	for i := len(ratios) - 1; i >= 0; i-- {
+		value, err := strconv.ParseFloat(ratios[i].LongShortRatio, 64)
+		if err != nil {
+			continue
+		}
+		seriesRatios = append(seriesRatios, value)
+	}
+
+	// Get the latest data point
+	// 获取最新数据点
+	latest := ratios[0]
+	longShortRatio, _ := strconv.ParseFloat(latest.LongShortRatio, 64)
+	longAccount, _ := strconv.ParseFloat(latest.LongAccount, 64)
+	shortAccount, _ := strconv.ParseFloat(latest.ShortAccount, 64)
+
+	result := map[string]interface{}{
+		"period":           period,
+		"long_short_ratio": longShortRatio,
+		"long_account":     longAccount * 100,  // Convert to percentage
+		"short_account":    shortAccount * 100, // Convert to percentage
+		"timestamp":        latest.Timestamp,
+		"series_ratios":    seriesRatios,
+	}
+
+	return result, nil
+}
+
+// GetOpenInterestChange 获取持仓量变化统计（对比当前和历史数据）
+// GetOpenInterestChange gets open interest change by comparing current and historical data
+func (m *MarketData) GetOpenInterestChange(ctx context.Context, symbol string, period string, limit int) (map[string]interface{}, error) {
+	stats, err := m.client.NewOpenInterestStatisticsService().
+		Symbol(symbol).
+		Period(period).
+		Limit(limit).
+		Do(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch open interest statistics: %w", err)
+	}
+
+	if len(stats) == 0 {
+		return nil, fmt.Errorf("no data returned for open interest statistics")
+	}
+
+	// Calculate change if we have at least 2 data points
+	// 如果有至少 2 个数据点，计算变化率
+	current, _ := strconv.ParseFloat(stats[0].SumOpenInterestValue, 64)
+	currentOI, _ := strconv.ParseFloat(stats[0].SumOpenInterest, 64)
+
+	var changePercent float64
+	var previous float64
+
+	if len(stats) >= 2 {
+		previous, _ = strconv.ParseFloat(stats[1].SumOpenInterestValue, 64)
+		if previous > 0 {
+			changePercent = ((current - previous) / previous) * 100
+		}
+	}
+
+	// Build chronological series data for richer reporting
+	// 构建时间顺序的序列数据，便于报告展示
+	seriesValues := make([]float64, 0, len(stats))
+	for i := len(stats) - 1; i >= 0; i-- {
+		value, err := strconv.ParseFloat(stats[i].SumOpenInterestValue, 64)
+		if err != nil {
+			continue
+		}
+		seriesValues = append(seriesValues, value)
+	}
+
+	result := map[string]interface{}{
+		"period":            period,
+		"current_oi_value":  current,
+		"current_oi":        currentOI,
+		"previous_oi_value": previous,
+		"change_percent":    changePercent,
+		"timestamp":         stats[0].Timestamp,
+		"series_values":     seriesValues,
+	}
+
+	return result, nil
+}
+
 // FormatOrderBookReport formats order book data into a detailed report for LLM
 // FormatOrderBookReport 将订单簿数据格式化为 LLM 易读的详细报告
 func FormatOrderBookReport(orderBook map[string]interface{}, topN int) string {
@@ -908,7 +1011,7 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 	if len(indicators.SMA_50) > lastIdx && !math.IsNaN(indicators.SMA_50[lastIdx]) {
 		sma50Val = indicators.SMA_50[lastIdx]
 	}
-	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. 50-Period EMA: %.1f\n\n", ema20Val, sma50Val))
+	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. EMA(50): %.1f\n\n", ema20Val, sma50Val))
 
 	// === ATR(3) vs 14-Period ATR ===
 	atr3Val := 0.0
@@ -919,7 +1022,7 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 	if len(indicators.ATR) > lastIdx && !math.IsNaN(indicators.ATR[lastIdx]) {
 		atr14Val = indicators.ATR[lastIdx]
 	}
-	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. 14-Period ATR: %.1f\n\n", atr3Val, atr14Val))
+	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. ATR(14): %.1f\n\n", atr3Val, atr14Val))
 
 	// === 当前成交量 vs 平均成交量 ===
 	// === Current Volume vs Average Volume ===

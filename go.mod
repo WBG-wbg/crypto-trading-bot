@@ -4,9 +4,11 @@ go 1.24.2
 
 require (
 	github.com/adshao/go-binance/v2 v2.8.7
+	github.com/bytedance/sonic v1.14.2
 	github.com/cloudwego/eino v0.5.12
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.4
 	github.com/cloudwego/hertz v0.10.3
+	github.com/eino-contrib/jsonschema v1.0.2
 	github.com/jpillora/backoff v1.0.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.21.0
@@ -18,14 +20,12 @@ require (
 	github.com/bitly/go-simplejson v0.5.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/sonic v1.14.1 // indirect
-	github.com/bytedance/sonic/loader v0.3.0 // indirect
+	github.com/bytedance/sonic/loader v0.4.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.1 // indirect
 	github.com/cloudwego/gopkg v0.1.4 // indirect
 	github.com/cloudwego/netpoll v0.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/eino-contrib/jsonschema v1.0.2 // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/getkin/kin-openapi v0.118.0 // indirect

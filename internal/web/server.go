@@ -35,19 +35,15 @@ type Server struct {
 
 // NewServer creates a new web monitoring server
 // NewServer 创建新的 Web 监控服务器
-func NewServer(cfg *config.Config, log *logger.ColorLogger, db *storage.Storage, stopLossMgr *executors.StopLossManager) *Server {
+func NewServer(cfg *config.Config, log *logger.ColorLogger, db *storage.Storage, stopLossMgr *executors.StopLossManager, sched *scheduler.TradingScheduler) *Server {
 	h := server.Default(server.WithHostPorts(fmt.Sprintf(":%d", cfg.WebPort)))
-
-	// Initialize scheduler (use TradingInterval, not CryptoTimeframe)
-	// 初始化调度器（使用 TradingInterval 而不是 CryptoTimeframe）
-	sched, _ := scheduler.NewTradingScheduler(cfg.TradingInterval)
 
 	s := &Server{
 		config:          cfg,
 		logger:          log,
 		storage:         db,
 		stopLossManager: stopLossMgr,
-		scheduler:       sched,
+		scheduler:       sched,               // Use provided scheduler / 使用提供的调度器
 		sessionManager:  NewSessionManager(), // 初始化 Session 管理器 / Initialize session manager
 		hertz:           h,
 	}
@@ -75,6 +71,7 @@ func (s *Server) setupRoutes() {
 		protected.GET("/", s.handleIndex)
 		protected.GET("/sessions", s.handleSessions)
 		protected.GET("/session/:id", s.handleSessionDetail)
+		protected.GET("/trade-history", s.handleTradeHistory)
 		protected.GET("/stats", s.handleStats)
 		protected.GET("/logout", s.handleLogout)
 
@@ -86,6 +83,12 @@ func (s *Server) setupRoutes() {
 		protected.GET("/api/symbols", s.handleSymbols)
 		protected.GET("/api/balance/history", s.handleBalanceHistory)
 		protected.GET("/api/balance/current", s.handleCurrentBalance)
+
+		// Configuration management
+		// 配置管理
+		protected.GET("/api/config", s.handleGetConfig)
+		protected.POST("/api/config", s.handleUpdateConfig)
+		protected.POST("/api/config/save", s.handleSaveConfig)
 	}
 }
 
@@ -545,4 +548,177 @@ func (s *Server) handleCurrentBalance(ctx context.Context, c *app.RequestContext
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// handleTradeHistory renders the full trade history page with pagination
+// handleTradeHistory 渲染带分页的完整交易历史页面
+func (s *Server) handleTradeHistory(ctx context.Context, c *app.RequestContext) {
+	// Get pagination parameters
+	// 获取分页参数
+	page := 1
+	pageSize := 50 // Default page size / 默认每页大小
+
+	if pageStr := c.Query("page"); pageStr != "" {
+		fmt.Sscanf(pageStr, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+
+	if pageSizeStr := c.Query("page_size"); pageSizeStr != "" {
+		fmt.Sscanf(pageSizeStr, "%d", &pageSize)
+		// Limit page size to valid options
+		// 限制每页大小为有效选项
+		if pageSize != 20 && pageSize != 50 && pageSize != 100 {
+			pageSize = 50
+		}
+	}
+
+	// Calculate offset
+	// 计算偏移量
+	offset := (page - 1) * pageSize
+
+	// Get total batch count
+	// 获取总批次数
+	totalCount, err := s.storage.GetTotalBatchCount()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
+	// Calculate total pages
+	// 计算总页数
+	totalPages := (totalCount + pageSize - 1) / pageSize
+
+	// Get batches with pagination
+	// 获取分页的批次
+	batches, err := s.storage.GetBatchesWithPagination(offset, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
+	// Create template with custom functions
+	// 创建带自定义函数的模板
+	funcMap := template.FuncMap{
+		"extractAction": extractActionFromDecision,
+		"add": func(a, b int) int {
+			return a + b
+		},
+		"sub": func(a, b int) int {
+			return a - b
+		},
+		"iterate": func(count int) []int {
+			result := make([]int, count)
+			for i := 0; i < count; i++ {
+				result[i] = i
+			}
+			return result
+		},
+	}
+	tmpl := template.Must(template.New("trade_history.html").Funcs(funcMap).ParseFiles("internal/web/templates/trade_history.html"))
+
+	data := map[string]interface{}{
+		"Batches":     batches,
+		"CurrentPage": page,
+		"PageSize":    pageSize,
+		"TotalCount":  totalCount,
+		"TotalPages":  totalPages,
+		"HasPrev":     page > 1,
+		"HasNext":     page < totalPages,
+	}
+
+	// Execute template and render
+	// 执行模板并渲染
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())
+}
+
+// handleGetConfig returns the current trading interval configuration
+// handleGetConfig 返回当前的交易间隔配置
+func (s *Server) handleGetConfig(ctx context.Context, c *app.RequestContext) {
+	response := map[string]interface{}{
+		"trading_interval": s.scheduler.GetTimeframe(),
+		"available_intervals": []string{
+			"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d",
+		},
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// handleUpdateConfig updates the trading interval temporarily (in memory only)
+// handleUpdateConfig 临时更新交易间隔（仅在内存中）
+func (s *Server) handleUpdateConfig(ctx context.Context, c *app.RequestContext) {
+	// Parse request body
+	// 解析请求体
+	var req struct {
+		TradingInterval string `json:"trading_interval"`
+	}
+
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Validate trading interval
+	// 验证交易间隔
+	validIntervals := map[string]bool{
+		"1m": true, "3m": true, "5m": true, "15m": true, "30m": true,
+		"1h": true, "2h": true, "4h": true, "6h": true, "12h": true, "1d": true,
+	}
+
+	if !validIntervals[req.TradingInterval] {
+		c.JSON(http.StatusBadRequest, utils.H{"error": "Invalid trading interval"})
+		return
+	}
+
+	// Update scheduler
+	// 更新调度器
+	if err := s.scheduler.UpdateTimeframe(req.TradingInterval); err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
+	s.logger.Info(fmt.Sprintf("Trading interval updated temporarily (new_interval=%s)", req.TradingInterval))
+
+	c.JSON(http.StatusOK, utils.H{
+		"status":           "success",
+		"message":          "Trading interval updated temporarily (in memory)",
+		"trading_interval": req.TradingInterval,
+	})
+}
+
+// handleSaveConfig saves the current configuration to .env file
+// handleSaveConfig 将当前配置保存到 .env 文件
+func (s *Server) handleSaveConfig(ctx context.Context, c *app.RequestContext) {
+	// Get current trading interval from scheduler
+	// 从调度器获取当前交易间隔
+	currentInterval := s.scheduler.GetTimeframe()
+
+	// Prepare updates for .env file
+	// 准备 .env 文件的更新
+	updates := map[string]string{
+		"TRADING_INTERVAL": currentInterval,
+	}
+
+	// Save to .env file
+	// 保存到 .env 文件
+	if err := config.SaveToEnv(".env", updates); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to save config to .env: %v", err))
+		c.JSON(http.StatusInternalServerError, utils.H{"error": err.Error()})
+		return
+	}
+
+	s.logger.Info(fmt.Sprintf("Trading interval saved to .env (trading_interval=%s)", currentInterval))
+
+	c.JSON(http.StatusOK, utils.H{
+		"status":           "success",
+		"message":          "Configuration saved to .env file",
+		"trading_interval": currentInterval,
+	})
 }
