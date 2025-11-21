@@ -891,10 +891,15 @@ func (m *MarketData) GetTopLongShortPositionRatio(ctx context.Context, symbol st
 		return nil, fmt.Errorf("no data returned for top long/short position ratio")
 	}
 
-	// Prepare series data (oldest to newest for better readability)
-	// 准备序列数据（按时间从旧到新，便于阅读）
+	// Binance API returns data in oldest-to-newest order (same as OpenInterestStatistics)
+	// 币安 API 返回数据按从旧到新的顺序（与 OpenInterestStatistics 相同）
+	// ratios[0] = oldest, ratios[len-1] = newest
+	// ratios[0] = 最旧，ratios[len-1] = 最新
+
+	// Prepare series data (API already returns oldest to newest, no need to reverse)
+	// 准备序列数据（API 已经按从旧到新返回，无需反转）
 	seriesRatios := make([]float64, 0, len(ratios))
-	for i := len(ratios) - 1; i >= 0; i-- {
+	for i := 0; i < len(ratios); i++ {
 		value, err := strconv.ParseFloat(ratios[i].LongShortRatio, 64)
 		if err != nil {
 			continue
@@ -902,9 +907,9 @@ func (m *MarketData) GetTopLongShortPositionRatio(ctx context.Context, symbol st
 		seriesRatios = append(seriesRatios, value)
 	}
 
-	// Get the latest data point
-	// 获取最新数据点
-	latest := ratios[0]
+	// Get the latest data point (last element in array)
+	// 获取最新数据点（数组最后一个元素）
+	latest := ratios[len(ratios)-1]
 	longShortRatio, _ := strconv.ParseFloat(latest.LongShortRatio, 64)
 	longAccount, _ := strconv.ParseFloat(latest.LongAccount, 64)
 	shortAccount, _ := strconv.ParseFloat(latest.ShortAccount, 64)
@@ -938,25 +943,35 @@ func (m *MarketData) GetOpenInterestChange(ctx context.Context, symbol string, p
 		return nil, fmt.Errorf("no data returned for open interest statistics")
 	}
 
+	// Binance API returns data in oldest-to-newest order (confirmed by timestamp comparison)
+	// 币安 API 返回数据按从旧到新的顺序（通过时间戳对比确认）
+	// stats[0] = oldest, stats[len-1] = newest
+	// stats[0] = 最旧，stats[len-1] = 最新
+
 	// Calculate change if we have at least 2 data points
 	// 如果有至少 2 个数据点，计算变化率
-	current, _ := strconv.ParseFloat(stats[0].SumOpenInterestValue, 64)
-	currentOI, _ := strconv.ParseFloat(stats[0].SumOpenInterest, 64)
+	// Use the newest data point as "current"
+	// 使用最新的数据点作为"当前值"
+	lastIdx := len(stats) - 1
+	current, _ := strconv.ParseFloat(stats[lastIdx].SumOpenInterestValue, 64)
+	currentOI, _ := strconv.ParseFloat(stats[lastIdx].SumOpenInterest, 64)
 
 	var changePercent float64
 	var previous float64
 
 	if len(stats) >= 2 {
-		previous, _ = strconv.ParseFloat(stats[1].SumOpenInterestValue, 64)
+		previous, _ = strconv.ParseFloat(stats[lastIdx-1].SumOpenInterestValue, 64)
 		if previous > 0 {
 			changePercent = ((current - previous) / previous) * 100
 		}
 	}
 
-	// Build chronological series data for richer reporting
-	// 构建时间顺序的序列数据，便于报告展示
+	// Build chronological series data (oldest to newest)
+	// 构建时间顺序的序列数据（从旧到新）
+	// API already returns data in chronological order, so no need to reverse
+	// API 已经按时间顺序返回数据，无需反转
 	seriesValues := make([]float64, 0, len(stats))
-	for i := len(stats) - 1; i >= 0; i-- {
+	for i := 0; i < len(stats); i++ {
 		value, err := strconv.ParseFloat(stats[i].SumOpenInterestValue, 64)
 		if err != nil {
 			continue
@@ -970,7 +985,7 @@ func (m *MarketData) GetOpenInterestChange(ctx context.Context, symbol string, p
 		"current_oi":        currentOI,
 		"previous_oi_value": previous,
 		"change_percent":    changePercent,
-		"timestamp":         stats[0].Timestamp,
+		"timestamp":         stats[lastIdx].Timestamp, // Use newest timestamp / 使用最新时间戳
 		"series_values":     seriesValues,
 	}
 

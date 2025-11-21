@@ -683,6 +683,167 @@ func (e *BinanceExecutor) executeCloseShort(ctx context.Context, symbol string, 
 	return nil
 }
 
+// GetAccountSummary returns a formatted account summary (balance and margin usage)
+// GetAccountSummary 返回格式化的账户摘要信息（余额和保证金使用情况）
+func (e *BinanceExecutor) GetAccountSummary(ctx context.Context) string {
+	var summary strings.Builder
+
+	// Get account balance
+	// 获取账户余额
+	account, err := e.client.NewGetAccountService().Do(ctx)
+	if err != nil {
+		return fmt.Sprintf("**获取账户信息失败**: %v", err)
+	}
+
+	var usdtFree, usdtTotal float64
+	for _, asset := range account.Assets {
+		if asset.Asset == "USDT" {
+			usdtFree, _ = parseFloat(asset.AvailableBalance)
+			usdtTotal, _ = parseFloat(asset.WalletBalance)
+			break
+		}
+	}
+
+	// Calculate used margin and usage rate
+	// 计算已用保证金和资金使用率
+	usedMargin := usdtTotal - usdtFree
+	usageRate := 0.0
+	if usdtTotal > 0 {
+		usageRate = (usedMargin / usdtTotal) * 100
+	}
+
+	// Determine risk level based on usage rate
+	// 根据资金使用率确定风险等级
+	riskLevel := ""
+	if usageRate < 30 {
+		riskLevel = "✅ 安全"
+	} else if usageRate < 50 {
+		riskLevel = "⚠️ 谨慎"
+	} else if usageRate < 70 {
+		riskLevel = "🚨 警戒"
+	} else {
+		riskLevel = "❌ 危险"
+	}
+
+	summary.WriteString("- 总余额: ")
+	summary.WriteString(fmt.Sprintf("%.2f USDT\n", usdtTotal))
+	summary.WriteString("- 可用余额: ")
+	summary.WriteString(fmt.Sprintf("%.2f USDT\n", usdtFree))
+	summary.WriteString("- 已用保证金: ")
+	summary.WriteString(fmt.Sprintf("%.2f USDT\n", usedMargin))
+	summary.WriteString(fmt.Sprintf("- 资金使用率: %.1f%% %s\n", usageRate, riskLevel))
+
+	return summary.String()
+}
+
+// GetPositionOnly returns a formatted position summary for a single symbol (without account info)
+// GetPositionOnly 返回单个交易对的持仓信息（不包含账户信息）
+func (e *BinanceExecutor) GetPositionOnly(ctx context.Context, symbol string, stopLossManager *StopLossManager) string {
+	var summary strings.Builder
+
+	// Get position (prioritize StopLossManager for accurate HighestPrice tracking)
+	// 获取持仓（优先从 StopLossManager 获取以获得准确的最高/最低价跟踪）
+	var position *Position
+	var managedPos *Position // Position from StopLossManager (has HighestPrice)
+
+	if stopLossManager != nil {
+		managedPos = stopLossManager.GetPosition(symbol)
+	}
+
+	// Always get fresh data from Binance for real-time UnrealizedPnL, LiquidationPrice, etc.
+	// 始终从币安获取最新数据（实时盈亏、爆仓价等）
+	position, _ = e.GetCurrentPosition(ctx, symbol)
+
+	// If we have both, merge HighestPrice from managed position into fresh position
+	// 如果两个都有，将托管持仓的 HighestPrice 合并到最新持仓中
+	if position != nil && managedPos != nil {
+		position.HighestPrice = managedPos.HighestPrice
+		position.CurrentPrice = managedPos.CurrentPrice
+		position.InitialStopLoss = managedPos.InitialStopLoss
+		position.CurrentStopLoss = managedPos.CurrentStopLoss
+	} else if position == nil && managedPos != nil {
+		// If Binance API failed, use managed position
+		// 如果币安 API 失败，使用托管持仓
+		position = managedPos
+	}
+
+	if position != nil && position.Side != "" {
+		sideCN := "多头"
+		if position.Side == "short" {
+			sideCN = "空头"
+		}
+
+		// Get current price
+		// 获取当前价格
+		ticker, _ := e.client.NewListPriceChangeStatsService().Symbol(e.config.GetBinanceSymbolFor(symbol)).Do(ctx)
+		currentPrice := position.EntryPrice
+		if len(ticker) > 0 {
+			currentPrice, _ = parseFloat(ticker[0].LastPrice)
+		}
+
+		// Calculate ROE (Return on Equity) using Binance official formula
+		// 使用币安官方公式计算 ROE（回报率）
+		pnlPct := 0.0
+		if position.EntryPrice > 0 && position.Size > 0 && position.Leverage > 0 {
+			initialMargin := (position.EntryPrice * position.Size) / float64(position.Leverage)
+			if initialMargin > 0 {
+				pnlPct = (position.UnrealizedPnL / initialMargin) * 100
+			}
+		}
+
+		summary.WriteString(fmt.Sprintf("- 方向: %s (%s)\n", sideCN, strings.ToUpper(position.Side)))
+		summary.WriteString(fmt.Sprintf("- 数量: %.4f\n", position.Size))
+		summary.WriteString(fmt.Sprintf("- 开仓价格: $%.2f\n", position.EntryPrice))
+		summary.WriteString(fmt.Sprintf("- 杠杆倍数: %dx\n", position.Leverage))
+		summary.WriteString(fmt.Sprintf("- 当前价格: $%.2f\n", currentPrice))
+
+		// Display highest/lowest price since position entry
+		// 显示持仓期间的最高/最低价
+		if position.HighestPrice > 0 {
+			if position.Side == "long" {
+				summary.WriteString(fmt.Sprintf("- 持仓期间最高价: $%.2f", position.HighestPrice))
+				priceFromHigh := ((position.HighestPrice - currentPrice) / position.HighestPrice) * 100
+				if priceFromHigh > 0.1 {
+					summary.WriteString(fmt.Sprintf(" (当前回撤 %.2f%%)\n", priceFromHigh))
+				} else {
+					summary.WriteString(" (当前在最高点)\n")
+				}
+			} else {
+				summary.WriteString(fmt.Sprintf("- 持仓期间最低价: $%.2f", position.HighestPrice))
+				priceFromLow := ((currentPrice - position.HighestPrice) / position.HighestPrice) * 100
+				if priceFromLow > 0.1 {
+					summary.WriteString(fmt.Sprintf(" (当前反弹 %.2f%%)\n", priceFromLow))
+				} else {
+					summary.WriteString(" (当前在最低点)\n")
+				}
+			}
+		}
+
+		summary.WriteString(fmt.Sprintf("- 未实现盈亏: %+.2f USDT (%+.2f%%)\n", position.UnrealizedPnL, pnlPct))
+
+		// Display stop-loss information if available
+		// 显示止损信息（如果可用）
+		if stopLossManager != nil {
+			managedPos := stopLossManager.GetPosition(symbol)
+			if managedPos != nil && managedPos.CurrentStopLoss > 0 {
+				summary.WriteString(fmt.Sprintf("- 当前止损: $%.2f", managedPos.CurrentStopLoss))
+				stopDistance := 0.0
+				if position.Side == "long" {
+					stopDistance = ((currentPrice - managedPos.CurrentStopLoss) / currentPrice) * 100
+				} else {
+					stopDistance = ((managedPos.CurrentStopLoss - currentPrice) / currentPrice) * 100
+				}
+				summary.WriteString(fmt.Sprintf(" (距离当前价 %.2f%%)\n", stopDistance))
+			}
+		}
+
+	} else {
+		summary.WriteString("无持仓\n")
+	}
+
+	return summary.String()
+}
+
 // GetPositionSummary returns a formatted position summary
 // GetPositionSummary 返回格式化的持仓摘要信息
 func (e *BinanceExecutor) GetPositionSummary(ctx context.Context, symbol string, stopLossManager *StopLossManager) string {

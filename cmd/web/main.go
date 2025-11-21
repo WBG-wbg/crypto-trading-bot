@@ -639,6 +639,10 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 			log.Info(coordinator.GetExecutionSummary(result))
 
 			if result.Success {
+				// Increment trade count for successful execution
+				// 交易成功执行，增加交易计数
+				tradingGraph.IncrementTradeCount()
+
 				executionResults[symbol] = fmt.Sprintf("✅ 成功执行 %s", result.Action)
 
 				// Handle closing positions: cancel stop-loss and update database

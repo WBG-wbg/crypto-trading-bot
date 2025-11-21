@@ -3,12 +3,13 @@ package agents
 import (
 	"context"
 	"fmt"
-	"github.com/bytedance/sonic"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/bytedance/sonic"
 	openaiComponent "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -54,6 +55,8 @@ type AgentState struct {
 	Symbols       []string                  // 所有交易对 / All trading pairs
 	Timeframe     string                    // 时间周期 / Timeframe
 	Reports       map[string]*SymbolReports // 每个交易对的报告 / Reports for each symbol
+	AccountInfo   string                    // 账户总览信息 / Account overview
+	AllPositions  string                    // 所有持仓汇总 / All positions summary
 	FinalDecision string                    // 最终交易决策 / Final trading decision
 	mu            sync.RWMutex              // 读写锁 / Read-write mutex
 }
@@ -114,6 +117,22 @@ func (s *AgentState) SetPositionInfo(symbol, info string) {
 	}
 }
 
+// SetAccountInfo sets the account overview information
+// SetAccountInfo 设置账户总览信息
+func (s *AgentState) SetAccountInfo(info string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.AccountInfo = info
+}
+
+// SetAllPositions sets the all positions summary
+// SetAllPositions 设置所有持仓汇总
+func (s *AgentState) SetAllPositions(info string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.AllPositions = info
+}
+
 // SetFinalDecision sets the final trading decision
 // SetFinalDecision 设置最终交易决策
 func (s *AgentState) SetFinalDecision(decision string) {
@@ -138,7 +157,21 @@ func (s *AgentState) GetAllReports() string {
 
 	var sb strings.Builder
 
-	// 为每个交易对生成报告 / Generate reports for each symbol
+	// 首先显示账户总览 / First show account overview
+	if s.AccountInfo != "" {
+		sb.WriteString("\n=== 账户总览 ===\n")
+		sb.WriteString(s.AccountInfo)
+		sb.WriteString("\n")
+	}
+
+	// 然后显示所有持仓汇总 / Then show all positions summary
+	if s.AllPositions != "" {
+		sb.WriteString("=== 持仓汇总 ===\n")
+		sb.WriteString(s.AllPositions)
+		sb.WriteString("\n")
+	}
+
+	// 最后为每个交易对生成市场分析报告（不包含持仓信息）/ Finally generate market analysis for each symbol (without position info)
 	for _, symbol := range s.Symbols {
 		reports := s.Reports[symbol]
 		sb.WriteString(fmt.Sprintf("\n================ %s 分析报告 ================\n", symbol))
@@ -146,10 +179,8 @@ func (s *AgentState) GetAllReports() string {
 		sb.WriteString(reports.MarketReport)
 		sb.WriteString("\n\n=== 加密货币专属分析 ===\n")
 		sb.WriteString(reports.CryptoReport)
-		sb.WriteString("\n\n=== 市场情绪分析 ===\n")
-		sb.WriteString(reports.SentimentReport)
-		sb.WriteString("\n\n=== 当前持仓信息 ===\n")
-		sb.WriteString(reports.PositionInfo)
+		//sb.WriteString("\n\n=== 市场情绪分析 ===\n")
+		//sb.WriteString(reports.SentimentReport)
 		sb.WriteString("\n")
 	}
 
@@ -238,6 +269,9 @@ type SimpleTradingGraph struct {
 	executor        *executors.BinanceExecutor
 	state           *AgentState
 	stopLossManager *executors.StopLossManager
+	startTime       time.Time  // 交易开始时间 / Trading start time
+	tradeCount      int        // 已执行的交易次数 / Number of trades executed
+	mu              sync.Mutex // 保护 tradeCount / Protect tradeCount
 }
 
 // NewSimpleTradingGraph creates a new simple trading graph
@@ -249,7 +283,25 @@ func NewSimpleTradingGraph(cfg *config.Config, log *logger.ColorLogger, executor
 		executor:        executor,
 		state:           NewAgentState(cfg.CryptoSymbols, cfg.CryptoTimeframe),
 		stopLossManager: stopLossManager,
+		startTime:       time.Now(), // 初始化交易开始时间 / Initialize trading start time
+		tradeCount:      0,          // 初始化交易次数为 0 / Initialize trade count to 0
 	}
+}
+
+// IncrementTradeCount increments the trade counter (thread-safe)
+// IncrementTradeCount 增加交易计数（线程安全）
+func (g *SimpleTradingGraph) IncrementTradeCount() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.tradeCount++
+}
+
+// GetTradeCount returns the current trade count (thread-safe)
+// GetTradeCount 返回当前交易次数（线程安全）
+func (g *SimpleTradingGraph) GetTradeCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.tradeCount
 }
 
 // BuildGraph constructs the trading workflow graph with parallel execution
@@ -383,27 +435,41 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				//	reportBuilder.WriteString("\n")
 				//}
 
-				// 持仓量统计 - 2h、15m 间隔，突出变化序列
-				// Open Interest Change - 2h window with 15m sampling to highlight momentum
-				reportBuilder.WriteString("📊 持仓量变化统计4h:\n")
-				reportBuilder.WriteString("注意：以下数据均为从旧到新\n")
+				// 持仓量统计 - 4h、15m 间隔，显示相对变化率
+				// Open Interest Statistics - 4h window with 15m sampling, showing percentage changes
+				reportBuilder.WriteString("📊 持仓量统计 (4h, 15m间隔):\n")
+				reportBuilder.WriteString("注意：以下数据均为从旧到新，显示相对于上一个点的变化率\n")
 
 				oiSeries, err := marketData.GetOpenInterestChange(ctx, binanceSymbol, "15m", 16)
 				if err != nil {
 					reportBuilder.WriteString(fmt.Sprintf("  数据获取失败: %v\n\n", err))
 				} else if rawSeries, ok := oiSeries["series_values"].([]float64); ok && len(rawSeries) > 0 {
-					base := rawSeries[0]
+					// 显示起始值和结束值（绝对值）
+					// Display start and end values (absolute values)
+
+					// 计算相对于上一个点的百分比变化
+					// Calculate percentage change relative to previous point
 					parts := make([]string, 0, len(rawSeries))
-					for _, val := range rawSeries {
-						var change float64
-						if base != 0 {
-							change = ((val - base) / base) * 100
+					for i, val := range rawSeries {
+						if i == 0 {
+							// 第一个点作为基准
+							// First point as baseline
+							parts = append(parts, "0.00%")
+						} else {
+							previous := rawSeries[i-1]
+							if previous > 0 {
+								change := ((val - previous) / previous) * 100
+								parts = append(parts, fmt.Sprintf("%+.2f%%", change))
+							} else {
+								parts = append(parts, "N/A")
+							}
 						}
-						parts = append(parts, fmt.Sprintf("%.2f%%", change))
 					}
-					reportBuilder.WriteString(fmt.Sprintf("间隔15分钟: [%s]\n\n", strings.Join(parts, ", ")))
+					reportBuilder.WriteString(fmt.Sprintf("持仓量变化率: [%s]\n", strings.Join(parts, ", ")))
+
+					reportBuilder.WriteString("\n")
 				} else {
-					reportBuilder.WriteString("  数据不足，无法构建 2h 序列\n\n")
+					reportBuilder.WriteString("  数据不足，无法构建 4h 序列\n\n")
 				}
 
 				// 大户多空比 - 2h 15m 间隔，提供序列变化
@@ -515,11 +581,18 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 	// Position Info Lambda - Gets current position for all symbols
 	// Position Info Lambda - 获取所有交易对的持仓信息
 	positionInfo := compose.InvokableLambda(func(ctx context.Context, input map[string]any) (map[string]any, error) {
-		g.logger.Info("📊 获取所有交易对的持仓信息...")
+		g.logger.Info("📊 获取账户总览和持仓信息...")
+
+		// 首先获取账户信息（只调用一次）/ First get account info (call only once)
+		accountSummary := g.executor.GetAccountSummary(ctx)
+		g.state.SetAccountInfo(accountSummary)
+		g.logger.Success("  ✅ 账户信息获取完成")
 
 		// 并行获取所有交易对的持仓 / Get positions for all symbols in parallel
 		var wg sync.WaitGroup
 		results := make(map[string]any)
+		positionSummaries := make(map[string]string) // 用于保存每个币种的持仓信息 / Store position info for each symbol
+		var mu sync.Mutex                            // 保护 positionSummaries map
 
 		for _, symbol := range g.state.Symbols {
 			wg.Add(1)
@@ -546,15 +619,29 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 					g.logger.Warning(fmt.Sprintf("  ⚠️  检查 %s 止损单状态失败: %v", sym, err))
 				}
 
-				posInfo := g.executor.GetPositionSummary(ctx, sym, g.stopLossManager)
-				g.state.SetPositionInfo(sym, posInfo)
+				// 获取持仓信息（不包含账户信息）/ Get position info (without account info)
+				posInfo := g.executor.GetPositionOnly(ctx, sym, g.stopLossManager)
+
+				mu.Lock()
+				positionSummaries[sym] = posInfo
+				mu.Unlock()
 
 				g.logger.Success(fmt.Sprintf("  ✅ %s 持仓信息获取完成", sym))
 			}(symbol)
 		}
 
 		wg.Wait()
-		g.logger.Success("✅ 所有交易对的持仓信息获取完成")
+
+		// 组合所有持仓信息 / Combine all position info
+		var allPositions strings.Builder
+		for _, symbol := range g.state.Symbols {
+			allPositions.WriteString(fmt.Sprintf("**%s**:\n", symbol))
+			allPositions.WriteString(positionSummaries[symbol])
+			allPositions.WriteString("\n")
+		}
+
+		g.state.SetAllPositions(allPositions.String())
+		g.logger.Success("✅ 账户总览和持仓信息获取完成")
 
 		return results, nil
 	})
@@ -794,12 +881,24 @@ func (g *SimpleTradingGraph) makeLLMDecision(ctx context.Context) (string, error
 **系统运行间隔**: %s（系统每隔此时间运行一次分析）
 `, g.config.CryptoTimeframe, g.config.TradingInterval)
 
-	userPrompt := fmt.Sprintf(`请分析以下数据并给出交易决策：
+	// Calculate trading session context
+	// 计算交易会话上下文信息
+	minutesSinceStart := int(time.Since(g.startTime).Minutes())
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+	tradeCount := g.GetTradeCount()
+
+	// Build session context info
+	// 构建会话上下文信息
+	sessionContext := fmt.Sprintf(`
+- 这是你开始交易的第 %d 分钟,目前的时间是：%s,你已经参与了交易 %d 次，
+`, minutesSinceStart, currentTime, tradeCount)
+
+	userPrompt := fmt.Sprintf(`%s下方我们将为您提供各种市场技术分析、加密货币状态分析，助您发掘超额收益。再下方是您当前的当前持仓信息，包括价值、业绩和持仓情况。请分析以下各种数据并给出交易决策：
 %s
 %s
 %s
 
-请给出你的分析和最终决策。`, leverageInfo, klineInfo, allReports)
+请给出你的分析和最终决策。`, sessionContext, leverageInfo, klineInfo, allReports)
 
 	// Create messages
 	// 创建消息
@@ -931,4 +1030,30 @@ func extractJSONPayload(content string) string {
 	}
 
 	return content
+}
+
+// formatLargeNumber formats large numbers into readable format (B/M/K)
+// formatLargeNumber 将大数字格式化为易读格式（B/M/K）
+func formatLargeNumber(value float64) string {
+	absValue := value
+	if absValue < 0 {
+		absValue = -absValue
+	}
+
+	var formatted string
+	if absValue >= 1e9 {
+		// Billions / 十亿
+		formatted = fmt.Sprintf("$%.3fB", value/1e9)
+	} else if absValue >= 1e6 {
+		// Millions / 百万
+		formatted = fmt.Sprintf("$%.3fM", value/1e6)
+	} else if absValue >= 1e3 {
+		// Thousands / 千
+		formatted = fmt.Sprintf("$%.3fK", value/1e3)
+	} else {
+		// Less than 1000 / 小于1000
+		formatted = fmt.Sprintf("$%.3f", value)
+	}
+
+	return formatted
 }
