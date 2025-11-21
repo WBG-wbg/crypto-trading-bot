@@ -148,7 +148,7 @@ LLM_BACKEND_URL=https://api.deepseek.com
 OPENAI_API_KEY=你的-api-key
 
 # 交易策略 Prompt
-TRADER_PROMPT_PATH=prompts/trader_optimized.txt
+TRADER_PROMPT_PATH=prompts/trader_json.txt
 
 # ===================================================================
 # 币安交易配置
@@ -244,7 +244,7 @@ AUTO_EXECUTE=true
 
 **第三步：优化策略**
 - 根据结果调整杠杆范围
-- 在 `prompts/trader_optimized.txt` 中微调交易 Prompt
+- 在 `prompts/trader_json.txt` 中微调交易 Prompt
 - 监控余额曲线和持仓表现
 
 ### 2. 理解时间周期配置
