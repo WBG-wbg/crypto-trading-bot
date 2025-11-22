@@ -676,7 +676,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 
 	// === 日内数据（最近10期）===
 	// === Intraday Data (Last 10 periods) ===
-	sb.WriteString(fmt.Sprintf("日内数据:\n\n"))
+	sb.WriteString(fmt.Sprintf("日内数据(序列为%s间隔):\n\n", timeframe))
 
 	// Determine series length (up to 10 data points)
 	// 确定序列长度（最多10个数据点）
@@ -1068,7 +1068,7 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 
 	// === 长期数据标题 ===
 	// === Long-term Data Header ===
-	sb.WriteString(fmt.Sprintf("长期数据 (%s):\n", timeframe))
+	sb.WriteString(fmt.Sprintf("长期数据 (序列为%s间隔):\n", timeframe))
 
 	// === 序列数据配置 ===
 	// === Series Data Configuration ===
@@ -1099,7 +1099,7 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 			middlePrices = append(middlePrices, fmt.Sprintf("%.1f", middlePrice))
 		}
 	}
-	sb.WriteString(fmt.Sprintf("中间价(%s间隔): [%s]\n", timeframe, strings.Join(middlePrices, ", ")))
+	sb.WriteString(fmt.Sprintf("中间价: [%s]\n", strings.Join(middlePrices, ", ")))
 
 	// === EMA(20) vs 50-Period EMA ===
 	ema20Val := 0.0
