@@ -64,19 +64,35 @@ func NewTrailingStopCalculator(log *logger.ColorLogger) *TrailingStopCalculator 
 // getDefaultConfigs returns default configurations for different symbols
 // getDefaultConfigs 返回不同币种的默认配置
 //
+// ⚙️ THIS IS THE CENTRAL CONFIGURATION FOR TRAILING STOP PARAMETERS
+// ⚙️ 这是追踪止损参数的中心配置
+//
+// Parameter descriptions:
+// 参数说明：
+//   - InitialATRMultiplier:  Initial stop distance = entry_price ± (multiplier × ATR)
+//     初始止损距离 = 入场价 ± (倍数 × ATR)
+//   - TrailingATRMultiplier: Trailing stop distance = highest/lowest_price ± (multiplier × ATR)
+//     追踪止损距离 = 最高/最低价 ± (倍数 × ATR)
+//   - UpdateThreshold:       Only update if stop price change >= threshold%
+//     仅当止损价格变化 >= 阈值% 时才更新（避免频繁调整）
+//   - MinStopDistance:       Minimum allowed stop distance from entry (prevents too tight stops)
+//     允许的最小止损距离（防止止损过紧）
+//   - MaxStopDistance:       Maximum allowed stop distance from entry (prevents excessive risk)
+//     允许的最大止损距离（防止风险过大）
+//
 // You can customize parameters for each symbol based on their volatility characteristics.
 // 你可以根据每个币种的波动性特征自定义参数。
 func getDefaultConfigs() map[string]TrailingStopConfig {
-	// Default configuration (used as fallback)
-	// 默认配置（作为后备）
+	// Default configuration (used as fallback for undefined symbols)
+	// 默认配置（用于未定义的币种）
 	defaultConfig := TrailingStopConfig{
 		InitialATRPeriod:      3,
 		InitialATRMultiplier:  2.5,
 		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.0,
-		UpdateThreshold:       0.2, // 0.2%
-		MinStopDistance:       0.5, // 1.5%
-		MaxStopDistance:       5.0, // 8%
+		TrailingATRMultiplier: 2.5,
+		UpdateThreshold:       0.3, // 0.3% - update only if change exceeds this
+		MinStopDistance:       0.5, // 0.5% - minimum stop distance from entry
+		MaxStopDistance:       5.0, // 5.0% - maximum stop distance from entry
 	}
 
 	configs := make(map[string]TrailingStopConfig)
@@ -87,8 +103,8 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 		InitialATRPeriod:      3,
 		InitialATRMultiplier:  2.5,
 		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.0,
-		UpdateThreshold:       0.2,
+		TrailingATRMultiplier: 2.5,
+		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       6.0,
 	}
@@ -99,8 +115,8 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 		InitialATRPeriod:      3,
 		InitialATRMultiplier:  2.5,
 		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.0,
-		UpdateThreshold:       0.2,
+		TrailingATRMultiplier: 2.5,
+		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       6.0,
 	}
@@ -111,8 +127,8 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 		InitialATRPeriod:      3,
 		InitialATRMultiplier:  2.5,
 		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.2, // Slightly wider / 稍微宽松一点
-		UpdateThreshold:       0.2,
+		TrailingATRMultiplier: 2.5, // Slightly wider / 稍微宽松一点
+		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       8.0,
 	}
@@ -123,8 +139,8 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 		InitialATRPeriod:      3,
 		InitialATRMultiplier:  2.5,
 		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.0,
-		UpdateThreshold:       0.2,
+		TrailingATRMultiplier: 2.5,
+		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       7.0,
 	}
@@ -135,8 +151,8 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 		InitialATRPeriod:      3,
 		InitialATRMultiplier:  2.5,
 		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.2,
-		UpdateThreshold:       1.2,
+		TrailingATRMultiplier: 2.5,
+		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       8.0,
 	}

@@ -69,10 +69,12 @@ type Config struct {
 	// 分析选项
 	EnableSentimentAnalysis bool // 是否启用市场情绪分析 / Enable sentiment analysis (CryptoOracle API)
 
-	// Stop-loss management configuration (LLM-driven fixed stop-loss only)
-	// 止损管理配置（仅 LLM 驱动的固定止损）
-	EnableStopLoss         bool    // 是否启用止损管理 / Enable stop-loss management
-	StopLossScopeThreshold float64 // 止损价格变化阈值（百分比）/ Stop-loss price change threshold (percentage)
+	// Stop-loss management configuration
+	// 止损管理配置
+	// Note: Trailing stop parameters (update threshold, ATR multiplier, etc.) are configured
+	// in internal/executors/trailing_stop_calculator.go for each symbol
+	// 注意：追踪止损参数（更新阈值、ATR倍数等）在 internal/executors/trailing_stop_calculator.go 中为每个币种配置
+	EnableStopLoss bool // 是否启用止损管理 / Enable stop-loss management
 
 	// Memory system
 	UseMemory  bool
@@ -164,9 +166,10 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		// Analysis options
 		EnableSentimentAnalysis: viper.GetBool("ENABLE_SENTIMENT_ANALYSIS"),
 
-		// Stop-loss management (LLM-driven)
-		EnableStopLoss:         viper.GetBool("ENABLE_STOPLOSS"),
-		StopLossScopeThreshold: viper.GetFloat64("STOPLOSS_SCOPE_THRESHOLD"),
+		// Stop-loss management
+		// Trailing stop parameters are configured in internal/executors/trailing_stop_calculator.go
+		// 追踪止损参数在 internal/executors/trailing_stop_calculator.go 中配置
+		EnableStopLoss: viper.GetBool("ENABLE_STOPLOSS"),
 
 		// Memory system
 		UseMemory:  viper.GetBool("USE_MEMORY"),
@@ -299,10 +302,11 @@ func setDefaults() {
 	// 分析选项默认值
 	viper.SetDefault("ENABLE_SENTIMENT_ANALYSIS", true) // 默认启用情绪分析 / Enable sentiment analysis by default
 
-	// Stop-loss management defaults (LLM-driven fixed stop-loss)
-	// 止损管理默认值（LLM 驱动的固定止损）
-	viper.SetDefault("ENABLE_STOPLOSS", true)         // 启用止损管理 / Enable stop-loss management
-	viper.SetDefault("STOPLOSS_SCOPE_THRESHOLD", 1.0) // 止损价格变化阈值 1.0% / Stop-loss change threshold 1.0%
+	// Stop-loss management defaults
+	// 止损管理默认值
+	// Trailing stop parameters are configured in internal/executors/trailing_stop_calculator.go
+	// 追踪止损参数在 internal/executors/trailing_stop_calculator.go 中配置
+	viper.SetDefault("ENABLE_STOPLOSS", true) // 启用止损管理 / Enable stop-loss management
 
 	viper.SetDefault("USE_MEMORY", true)
 	viper.SetDefault("MEMORY_TOP_K", 3)

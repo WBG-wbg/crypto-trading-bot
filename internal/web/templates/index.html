@@ -832,6 +832,7 @@
                                 <th>回报率</th>
                                 <th>未实现盈亏</th>
                                 <th>开仓价格</th>
+                                <th>当前止损</th>
                                 <th>杠杆</th>
                                 <th>方向</th>
                             </tr>
@@ -1183,12 +1184,17 @@
                         const sideClass = pos.side === 'long' ? 'side-long' : 'side-short';
                         const sideText = pos.side === 'long' ? '多头' : '空头';
 
+                        // Format stop-loss price / 格式化止损价格
+                        const stopLoss = pos.current_stop_loss || 0;
+                        const stopLossText = stopLoss > 0 ? `$${stopLoss.toFixed(2)}` : '-';
+
                         return `
                             <tr>
                                 <td style="font-weight: 600;">${pos.symbol}</td>
                                 <td class="${roeClass}">${roe >= 0 ? '+' : ''}${roe.toFixed(2)}%</td>
                                 <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT</td>
                                 <td>$${pos.entry_price.toFixed(2)}</td>
+                                <td style="color: #ef4444; font-weight: 600;">${stopLossText}</td>
                                 <td>${pos.leverage}x</td>
                                 <td class="${sideClass}">${sideText}</td>
                             </tr>

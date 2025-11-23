@@ -325,10 +325,10 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 		return fmt.Errorf("空仓止损只能向下移动")
 	}
 
-	// Check if change is significant enough (threshold from config)
-	// 检查变化是否足够大（阈值从配置读取）
+	// Check if change is significant enough (threshold from trailing stop calculator config)
+	// 检查变化是否足够大（阈值从追踪止损计算器配置读取）
 	changePercent := math.Abs((newStopLoss-oldStop)/oldStop) * 100
-	threshold := sm.config.StopLossScopeThreshold
+	threshold := sm.calculator.GetConfig(normalizedSymbol).UpdateThreshold
 	if changePercent < threshold {
 		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价格变化较小 (%.2f → %.2f, 变化 %.2f%% < 阈值 %.1f%%)，跳过更新以避免频繁调整",
 			pos.Symbol, oldStop, newStopLoss, changePercent, threshold))

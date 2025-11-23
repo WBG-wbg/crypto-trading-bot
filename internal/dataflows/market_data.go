@@ -40,6 +40,7 @@ type TechnicalIndicators struct {
 	EMA_12    []float64
 	EMA_20    []float64 // EMA(20) - 20期指数移动平均（常用趋势线）
 	EMA_26    []float64
+	EMA_50    []float64 // EMA(50) - 50期指数移动平均（中期趋势线）
 	ATR       []float64 // ATR(14) - 14期平均真实波幅
 	ATR_3     []float64 // ATR(3) - 3期平均真实波幅（短期波动率）
 	Volume    []float64
@@ -170,6 +171,7 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 	ema12 := calculateEMA(closes, 12)
 	ema20 := calculateEMA(closes, 20) // 新增：20期EMA（常用趋势线）
 	ema26 := calculateEMA(closes, 26)
+	ema50 := calculateEMA(closes, 50) // 新增：50期EMA（中期趋势线）
 	atr := calculateATR(highs, lows, closes, 14)
 	atr3 := calculateATR(highs, lows, closes, 3) // 新增：3期ATR（短期波动率）
 
@@ -192,6 +194,7 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 		EMA_12:    ema12,
 		EMA_20:    ema20, // 新增
 		EMA_26:    ema26,
+		EMA_50:    ema50, // 新增
 		ATR:       atr,
 		ATR_3:     atr3, // 新增
 		Volume:    volumes,
@@ -1103,14 +1106,14 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 
 	// === EMA(20) vs 50-Period EMA ===
 	ema20Val := 0.0
-	sma50Val := 0.0
+	ema50Val := 0.0
 	if len(indicators.EMA_20) > lastIdx && !math.IsNaN(indicators.EMA_20[lastIdx]) {
 		ema20Val = indicators.EMA_20[lastIdx]
 	}
-	if len(indicators.SMA_50) > lastIdx && !math.IsNaN(indicators.SMA_50[lastIdx]) {
-		sma50Val = indicators.SMA_50[lastIdx]
+	if len(indicators.EMA_50) > lastIdx && !math.IsNaN(indicators.EMA_50[lastIdx]) {
+		ema50Val = indicators.EMA_50[lastIdx]
 	}
-	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. EMA(50): %.1f\n\n", ema20Val, sma50Val))
+	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. EMA(50): %.1f\n\n", ema20Val, ema50Val))
 
 	// === ATR(3) vs ATR(14) ===
 	atr3Val := 0.0
