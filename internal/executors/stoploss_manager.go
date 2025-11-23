@@ -24,6 +24,8 @@ import (
 //     币安止损单下单和取消
 //  3. Position data storage and retrieval
 //     持仓数据存储和检索
+//  4. Automatic trailing stop calculation (local, deterministic)
+//     自动追踪止损计算（本地、确定性）
 //
 // Note: Local price monitoring is DISABLED. Stop-loss execution relies entirely on
 // Binance server-side STOP_MARKET orders, which provide:
@@ -37,14 +39,15 @@ import (
 //   - No duplicate execution risk
 //     无重复执行风险
 type StopLossManager struct {
-	positions map[string]*Position // symbol -> Position
-	executor  *BinanceExecutor     // 执行器 / Executor
-	config    *config.Config       // 配置 / Config
-	logger    *logger.ColorLogger  // 日志 / Logger
-	storage   *storage.Storage     // 数据库 / Database
-	mu        sync.RWMutex         // 读写锁 / RW mutex
-	ctx       context.Context      // 上下文 / Context
-	cancel    context.CancelFunc   // 取消函数 / Cancel function
+	positions  map[string]*Position    // symbol -> Position
+	executor   *BinanceExecutor        // 执行器 / Executor
+	config     *config.Config          // 配置 / Config
+	logger     *logger.ColorLogger     // 日志 / Logger
+	storage    *storage.Storage        // 数据库 / Database
+	calculator *TrailingStopCalculator // 追踪止损计算器 / Trailing stop calculator
+	mu         sync.RWMutex            // 读写锁 / RW mutex
+	ctx        context.Context         // 上下文 / Context
+	cancel     context.CancelFunc      // 取消函数 / Cancel function
 }
 
 // NewStopLossManager creates a new StopLossManager
@@ -52,13 +55,14 @@ type StopLossManager struct {
 func NewStopLossManager(cfg *config.Config, executor *BinanceExecutor, log *logger.ColorLogger, db *storage.Storage) *StopLossManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StopLossManager{
-		positions: make(map[string]*Position),
-		executor:  executor,
-		config:    cfg,
-		logger:    log,
-		storage:   db,
-		ctx:       ctx,
-		cancel:    cancel,
+		positions:  make(map[string]*Position),
+		executor:   executor,
+		config:     cfg,
+		logger:     log,
+		storage:    db,
+		calculator: NewTrailingStopCalculator(log), // 初始化追踪止损计算器 / Initialize trailing stop calculator
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -96,6 +100,20 @@ func (sm *StopLossManager) RemovePosition(symbol string) {
 
 	delete(sm.positions, normalizedSymbol)
 	sm.logger.Info(fmt.Sprintf("【%s】持仓已移除", symbol))
+}
+
+// HasPosition checks if a position exists for the symbol
+// HasPosition 检查指定币种是否存在持仓
+func (sm *StopLossManager) HasPosition(symbol string) bool {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	_, exists := sm.positions[normalizedSymbol]
+	return exists
 }
 
 // ClosePosition closes a position completely: cancels stop-loss order, removes from memory, and updates database
@@ -181,6 +199,16 @@ func (sm *StopLossManager) ClosePosition(ctx context.Context, symbol string, clo
 // If this function fails, the caller MUST remove the position from management.
 // 如果此函数失败，调用方必须从管理中移除持仓。
 func (sm *StopLossManager) PlaceInitialStopLoss(ctx context.Context, pos *Position) error {
+	// Validate initial stop-loss distance (relative to entry price)
+	// 验证初始止损距离（相对于入场价）
+	// This ensures the stop is not too tight (frequent triggers) or too wide (excessive risk)
+	// 确保止损不会太紧（频繁触发）或太宽（风险过大）
+	if !sm.calculator.ValidateStopDistance(pos.Symbol, pos.EntryPrice, pos.InitialStopLoss, pos.Side) {
+		sm.logger.Error(fmt.Sprintf("❌【%s】初始止损距离不合理: 入场价=%.2f, 止损价=%.2f, 方向=%s",
+			pos.Symbol, pos.EntryPrice, pos.InitialStopLoss, pos.Side))
+		return fmt.Errorf("初始止损距离超出合理范围，拒绝开仓")
+	}
+
 	// Try to place stop-loss order
 	// 尝试下止损单
 	err := sm.placeStopLossOrder(ctx, pos, pos.InitialStopLoss)
@@ -370,6 +398,102 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 			}
 		}
 	}
+
+	return nil
+}
+
+// AutoUpdateTrailingStop automatically calculates and updates trailing stop
+// AutoUpdateTrailingStop 自动计算并更新追踪止损
+//
+// This method is called every trading interval (e.g., every 5 minutes) to update
+// the trailing stop-loss based on the latest highest/lowest price and ATR.
+// 此方法在每个交易间隔（如每 5 分钟）调用，基于最新的最高/最低价和 ATR 更新追踪止损。
+//
+// It replaces LLM-based stop-loss calculation with deterministic formulas:
+// 它使用确定性公式替代基于 LLM 的止损计算：
+//   - Long: new_stop = highest_price - 2.0 × ATR(3)
+//   - Short: new_stop = lowest_price + 2.0 × ATR(3)
+//
+// Parameters:
+// 参数：
+//   - ctx: Context / 上下文
+//   - symbol: Trading symbol / 交易对
+//   - atr: Current ATR value / 当前 ATR 值
+//
+// Returns:
+// 返回：
+//   - error if update fails / 更新失败时返回错误
+//   - nil if no position or update not needed / 无持仓或无需更新时返回 nil
+func (sm *StopLossManager) AutoUpdateTrailingStop(ctx context.Context, symbol string, atr float64) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
+	sm.mu.RLock()
+	pos, exists := sm.positions[normalizedSymbol]
+	if !exists {
+		sm.mu.RUnlock()
+		return nil // No position, nothing to update / 无持仓，无需更新
+	}
+
+	// Copy necessary data to avoid holding lock during calculation
+	// 复制必要数据，避免在计算期间持有锁
+	side := pos.Side
+	highestPrice := pos.HighestPrice
+	currentStopLoss := pos.CurrentStopLoss
+	//entryPrice := pos.EntryPrice
+	sm.mu.RUnlock()
+
+	// Validate ATR value
+	// 验证 ATR 值
+	if atr <= 0 {
+		sm.logger.Warning(fmt.Sprintf("【%s】⚠️ ATR 值无效 (%.4f)，跳过追踪止损更新", symbol, atr))
+		return nil
+	}
+
+	// 1. Calculate new trailing stop price using local formula
+	// 1. 使用本地公式计算新的追踪止损价
+	newStopLoss := sm.calculator.CalculateTrailingStop(
+		symbol,
+		highestPrice,
+		atr,
+		side,
+	)
+
+	// 2. Validate stop-loss price is in favorable direction
+	// 2. 验证止损价朝有利方向移动
+	if !sm.calculator.IsValidUpdate(side, currentStopLoss, newStopLoss) {
+		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价未朝有利方向移动 (当前: %.2f → 计算: %.2f)，保持原止损",
+			symbol, currentStopLoss, newStopLoss))
+		return nil
+	}
+
+	// 3. Check if change is significant enough (exceeds threshold)
+	// 3. 检查变化是否足够大（超过阈值）
+	if !sm.calculator.ShouldUpdate(symbol, currentStopLoss, newStopLoss) {
+		changePercent := math.Abs((newStopLoss-currentStopLoss)/currentStopLoss) * 100
+		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价变化较小 (%.2f%%)，跳过更新以避免频繁调整",
+			symbol, changePercent))
+		return nil
+	}
+
+	// 4. Call existing UpdateStopLoss method to update Binance stop order
+	// 4. 调用现有的 UpdateStopLoss 方法更新币安止损单
+	priceType := "最低价"
+	if side == "long" {
+		priceType = "最高价"
+	}
+	reason := fmt.Sprintf("追踪止损自动调整（%s=%.2f, ATR=%.2f）",
+		priceType, highestPrice, atr)
+
+	err := sm.UpdateStopLoss(ctx, symbol, newStopLoss, reason)
+	if err != nil {
+		sm.logger.Error(fmt.Sprintf("【%s】❌ 自动更新追踪止损失败: %v", symbol, err))
+		return fmt.Errorf("自动更新追踪止损失败: %w", err)
+	}
+
+	sm.logger.Success(fmt.Sprintf("【%s】✅ 追踪止损已自动更新: %.2f → %.2f (本地计算)",
+		symbol, currentStopLoss, newStopLoss))
 
 	return nil
 }
