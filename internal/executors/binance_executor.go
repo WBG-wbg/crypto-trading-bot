@@ -387,7 +387,12 @@ func (e *BinanceExecutor) ExecuteTrade(ctx context.Context, symbol string, actio
 	currentPosition, _ := e.GetCurrentPosition(ctx, symbol)
 
 	// Log trade execution
-	e.logger.Header("交易执行", '=', 60)
+	// 记录交易执行
+	modeLabel := "【实盘】"
+	if e.testMode {
+		modeLabel = "【测试网】"
+	}
+	e.logger.Header(fmt.Sprintf("%s 交易执行", modeLabel), '=', 60)
 	e.logger.Info(fmt.Sprintf("动作: %s", action))
 	e.logger.Info(fmt.Sprintf("交易对: %s", symbol))
 	e.logger.Info(fmt.Sprintf("数量: %.4f", amount))
@@ -400,21 +405,7 @@ func (e *BinanceExecutor) ExecuteTrade(ctx context.Context, symbol string, actio
 	}
 
 	if e.testMode {
-		e.logger.Warning("测试模式 - 仅模拟交易，不实际下单")
-
-		// In test mode, get current market price for accurate position tracking
-		// 测试模式下，获取当前市场价格用于准确的持仓跟踪
-		currentPrice, err := e.GetCurrentPrice(ctx, symbol)
-		if err != nil {
-			e.logger.Warning(fmt.Sprintf("⚠️  测试模式：获取当前价格失败: %v，使用 0.0", err))
-			currentPrice = 0.0
-		}
-
-		result.Success = true
-		result.Price = currentPrice
-		result.Filled = amount
-		result.Message = fmt.Sprintf("测试模式：模拟交易成功 @ $%.2f", currentPrice)
-		return result
+		e.logger.Warning("🧪 币安测试网模式 - 使用虚拟资金交易（testnet.binancefuture.com）")
 	}
 
 	// Detect position mode
@@ -464,7 +455,11 @@ func (e *BinanceExecutor) executeBuy(ctx context.Context, symbol string, current
 
 	// Close short position if exists
 	if currentPosition != nil && currentPosition.Side == "short" {
-		e.logger.Info("📤 平空仓...")
+		modeLabel := ""
+		if e.testMode {
+			modeLabel = "🧪 [测试网] "
+		}
+		e.logger.Info(fmt.Sprintf("%s📤 平空仓...", modeLabel))
 		positionSide := futures.PositionSideTypeShort
 		if e.positionMode == PositionModeOneWay {
 			positionSide = futures.PositionSideTypeBoth
@@ -486,7 +481,11 @@ func (e *BinanceExecutor) executeBuy(ctx context.Context, symbol string, current
 
 	// Open long position if not already long
 	if currentPosition == nil || currentPosition.Side != "long" {
-		e.logger.Info("📈 开多仓...")
+		modeLabel := ""
+		if e.testMode {
+			modeLabel = "🧪 [测试网] "
+		}
+		e.logger.Info(fmt.Sprintf("%s📈 开多仓...", modeLabel))
 		positionSide := futures.PositionSideTypeLong
 		if e.positionMode == PositionModeOneWay {
 			positionSide = futures.PositionSideTypeBoth
@@ -520,7 +519,11 @@ func (e *BinanceExecutor) executeBuy(ctx context.Context, symbol string, current
 		result.OrderID = fmt.Sprintf("%d", order.OrderID)
 		result.Price = fillPrice
 		result.Message = "订单执行成功"
-		e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d, 成交价: %.2f", order.OrderID, fillPrice))
+		modeLabelSuccess := ""
+		if e.testMode {
+			modeLabelSuccess = "🧪 [测试网] "
+		}
+		e.logger.Success(fmt.Sprintf("%s✅ 订单执行成功，订单ID: %d, 成交价: %.2f", modeLabelSuccess, order.OrderID, fillPrice))
 	} else {
 		result.Message = "已有多仓，不重复开仓（系统保护：防止意外加仓）"
 		e.logger.Warning("⚠️ 已有多仓，不重复开仓")
@@ -534,7 +537,11 @@ func (e *BinanceExecutor) executeSell(ctx context.Context, symbol string, curren
 
 	// Close long position if exists
 	if currentPosition != nil && currentPosition.Side == "long" {
-		e.logger.Info("📤 平多仓...")
+		modeLabel := ""
+		if e.testMode {
+			modeLabel = "🧪 [测试网] "
+		}
+		e.logger.Info(fmt.Sprintf("%s📤 平多仓...", modeLabel))
 		positionSide := futures.PositionSideTypeLong
 		if e.positionMode == PositionModeOneWay {
 			positionSide = futures.PositionSideTypeBoth
@@ -556,7 +563,11 @@ func (e *BinanceExecutor) executeSell(ctx context.Context, symbol string, curren
 
 	// Open short position if not already short
 	if currentPosition == nil || currentPosition.Side != "short" {
-		e.logger.Info("📉 开空仓...")
+		modeLabel := ""
+		if e.testMode {
+			modeLabel = "🧪 [测试网] "
+		}
+		e.logger.Info(fmt.Sprintf("%s📉 开空仓...", modeLabel))
 		positionSide := futures.PositionSideTypeShort
 		if e.positionMode == PositionModeOneWay {
 			positionSide = futures.PositionSideTypeBoth
@@ -590,7 +601,11 @@ func (e *BinanceExecutor) executeSell(ctx context.Context, symbol string, curren
 		result.OrderID = fmt.Sprintf("%d", order.OrderID)
 		result.Price = fillPrice
 		result.Message = "订单执行成功"
-		e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d, 成交价: %.2f", order.OrderID, fillPrice))
+		modeLabelSuccess := ""
+		if e.testMode {
+			modeLabelSuccess = "🧪 [测试网] "
+		}
+		e.logger.Success(fmt.Sprintf("%s✅ 订单执行成功，订单ID: %d, 成交价: %.2f", modeLabelSuccess, order.OrderID, fillPrice))
 	} else {
 		result.Message = "已有空仓，不重复开仓（系统保护：防止意外加仓）"
 		e.logger.Warning("⚠️ 已有空仓，不重复开仓")
@@ -606,7 +621,11 @@ func (e *BinanceExecutor) executeCloseLong(ctx context.Context, symbol string, c
 		return nil
 	}
 
-	e.logger.Info("📤 平多仓...")
+	modeLabel := ""
+	if e.testMode {
+		modeLabel = "🧪 [测试网] "
+	}
+	e.logger.Info(fmt.Sprintf("%s📤 平多仓...", modeLabel))
 	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
 	positionSide := futures.PositionSideTypeLong
 	if e.positionMode == PositionModeOneWay {
@@ -637,7 +656,11 @@ func (e *BinanceExecutor) executeCloseLong(ctx context.Context, symbol string, c
 	result.Success = true
 	result.OrderID = fmt.Sprintf("%d", order.OrderID)
 	result.Message = "订单执行成功"
-	e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d", order.OrderID))
+	modeLabelSuccess := ""
+	if e.testMode {
+		modeLabelSuccess = "🧪 [测试网] "
+	}
+	e.logger.Success(fmt.Sprintf("%s✅ 订单执行成功，订单ID: %d", modeLabelSuccess, order.OrderID))
 	return nil
 }
 
@@ -648,7 +671,11 @@ func (e *BinanceExecutor) executeCloseShort(ctx context.Context, symbol string, 
 		return nil
 	}
 
-	e.logger.Info("📤 平空仓...")
+	modeLabel := ""
+	if e.testMode {
+		modeLabel = "🧪 [测试网] "
+	}
+	e.logger.Info(fmt.Sprintf("%s📤 平空仓...", modeLabel))
 	binanceSymbol := e.config.GetBinanceSymbolFor(symbol)
 	positionSide := futures.PositionSideTypeShort
 	if e.positionMode == PositionModeOneWay {
@@ -679,7 +706,11 @@ func (e *BinanceExecutor) executeCloseShort(ctx context.Context, symbol string, 
 	result.Success = true
 	result.OrderID = fmt.Sprintf("%d", order.OrderID)
 	result.Message = "订单执行成功"
-	e.logger.Success(fmt.Sprintf("✅ 订单执行成功，订单ID: %d", order.OrderID))
+	modeLabelSuccess := ""
+	if e.testMode {
+		modeLabelSuccess = "🧪 [测试网] "
+	}
+	e.logger.Success(fmt.Sprintf("%s✅ 订单执行成功，订单ID: %d", modeLabelSuccess, order.OrderID))
 	return nil
 }
 
