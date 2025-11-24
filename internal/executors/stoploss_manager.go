@@ -372,8 +372,12 @@ func (sm *StopLossManager) UpdateStopLoss(ctx context.Context, symbol string, ne
 	}
 
 	pos.CurrentStopLoss = newStopLoss
-	sm.logger.Success(fmt.Sprintf("【%s】✅ LLM 止损已更新: %.2f → %.2f (%s)",
-		pos.Symbol, oldStop, newStopLoss, reason))
+	modeLabel := ""
+	if sm.executor.testMode {
+		modeLabel = "🧪 [测试网] "
+	}
+	sm.logger.Success(fmt.Sprintf("%s【%s】✅ LLM 止损已更新: %.2f → %.2f (%s)",
+		modeLabel, pos.Symbol, oldStop, newStopLoss, reason))
 
 	// Persist to database with retry
 	// 持久化到数据库（带重试）
@@ -953,8 +957,12 @@ func (sm *StopLossManager) placeStopLossOrder(ctx context.Context, pos *Position
 	}
 
 	pos.StopLossOrderID = fmt.Sprintf("%d", order.OrderID)
-	sm.logger.Success(fmt.Sprintf("【%s】止损单已下达: %.2f (订单ID: %s, 当前价: %.2f)",
-		pos.Symbol, stopPrice, pos.StopLossOrderID, currentPrice))
+	modeLabel := ""
+	if sm.executor.testMode {
+		modeLabel = "🧪 [测试网] "
+	}
+	sm.logger.Success(fmt.Sprintf("%s【%s】止损单已下达: %.2f (订单ID: %s, 当前价: %.2f)",
+		modeLabel, pos.Symbol, stopPrice, pos.StopLossOrderID, currentPrice))
 
 	return nil
 }
@@ -972,8 +980,12 @@ func (sm *StopLossManager) cancelStopLossOrder(ctx context.Context, pos *Positio
 
 	// Log cancellation attempt
 	// 记录取消尝试
-	sm.logger.Info(fmt.Sprintf("【%s】正在取消止损单: OrderID=%s, Symbol=%s",
-		pos.Symbol, pos.StopLossOrderID, binanceSymbol))
+	modeLabel := ""
+	if sm.executor.testMode {
+		modeLabel = "🧪 [测试网] "
+	}
+	sm.logger.Info(fmt.Sprintf("%s【%s】正在取消止损单: OrderID=%s, Symbol=%s",
+		modeLabel, pos.Symbol, pos.StopLossOrderID, binanceSymbol))
 
 	_, err := sm.executor.client.NewCancelOrderService().
 		Symbol(binanceSymbol).
@@ -987,7 +999,7 @@ func (sm *StopLossManager) cancelStopLossOrder(ctx context.Context, pos *Positio
 			binanceSymbol, pos.StopLossOrderID, err)
 	}
 
-	sm.logger.Success(fmt.Sprintf("【%s】旧止损单已取消: %s", pos.Symbol, pos.StopLossOrderID))
+	sm.logger.Success(fmt.Sprintf("%s【%s】旧止损单已取消: %s", modeLabel, pos.Symbol, pos.StopLossOrderID))
 	pos.StopLossOrderID = ""
 
 	return nil

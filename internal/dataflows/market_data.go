@@ -630,7 +630,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 	}
 
 	lastIdx := len(ohlcvData) - 1
-	latestMidPrice := (ohlcvData[lastIdx].High + ohlcvData[lastIdx].Low) / 2
+	latestClosePrice := ohlcvData[lastIdx].Close
 
 	// === 标题 ===
 	// === Header ===
@@ -673,7 +673,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 		currentADX = indicators.ADX[lastIdx]
 	}
 
-	sb.WriteString(fmt.Sprintf("当前中间价 = %.1f, EMA(12) = %.1f, EMA(26) = %.1f\n", latestMidPrice, currentEMA12, currentEMA26))
+	sb.WriteString(fmt.Sprintf("当前价格 = %.1f, EMA(12) = %.1f, EMA(26) = %.1f\n", latestClosePrice, currentEMA12, currentEMA26))
 	sb.WriteString(fmt.Sprintf("MACD = %.1f,  RSI(7) = %.1f, RSI(14) = %.1f, ADX = %.1f\n\n", currentMACD, currentRSI7, currentRSI14, currentADX))
 	sb.WriteString(fmt.Sprintf("下述所有价格或信号数据均按时间从旧到新排列。\n\n"))
 
