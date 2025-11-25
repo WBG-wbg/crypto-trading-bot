@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adshao/go-binance/v2/futures"
@@ -51,6 +52,17 @@ type TechnicalIndicators struct {
 	DI_Plus     []float64 // +DI - 上升趋向指标
 	DI_Minus    []float64 // -DI - 下降趋向指标
 	VolumeRatio []float64 // Volume Ratio - 成交量比率
+}
+
+// MultiTimeframeIndicator holds key indicators for a single timeframe
+// MultiTimeframeIndicator 存储单个时间框架的关键指标
+type MultiTimeframeIndicator struct {
+	Timeframe string  // 时间框架（如 "3m", "5m", "15m", "1h", "4h"）
+	EMA20     float64 // EMA(20) - 20期指数移动平均
+	EMA50     float64 // EMA(50) - 50期指数移动平均
+	MACD      float64 // MACD - 动量指标
+	RSI7      float64 // RSI(7) - 7期相对强弱指数
+	RSI14     float64 // RSI(14) - 14期相对强弱指数
 }
 
 // MarketData handles crypto market data fetching
@@ -1149,6 +1161,152 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 	// === RSI(14) Series (Last 10 periods) ===
 	if len(indicators.RSI) > lastIdx {
 		sb.WriteString(fmt.Sprintf("RSI(14): %s\n\n", formatSeries(indicators.RSI, startIdx, lastIdx, 1)))
+	}
+
+	return sb.String()
+}
+
+// GetMultiTimeframeIndicators fetches and calculates indicators for multiple timeframes in parallel
+// GetMultiTimeframeIndicators 并行获取多个时间框架的数据并计算指标
+func (m *MarketData) GetMultiTimeframeIndicators(ctx context.Context, symbol string) []MultiTimeframeIndicator {
+	// Define fixed timeframes for multi-timeframe analysis
+	// 定义固定的多时间框架列表（经典的多周期分析组合）
+	timeframes := []string{"5m", "15m", "1h", "4h"}
+
+	// Calculate lookback days for each timeframe
+	// 为每个时间框架计算回看天数
+	// 注意：币安API限制最多返回1000根K线
+	lookbackDays := map[string]int{
+		"5m":  3,  // ~864 candles (3天 × 24h × 60m / 5m = 864)
+		"15m": 5,  // ~480 candles (5天 × 24h × 60m / 15m = 480)
+		"1h":  10, // ~240 candles (10天 × 24h / 1h = 240)
+		"4h":  15, // ~90 candles (15天 × 24h / 4h = 90)
+	}
+
+	// Use goroutines to fetch data in parallel
+	// 使用 goroutine 并行获取数据
+	var wg sync.WaitGroup
+	results := make([]MultiTimeframeIndicator, len(timeframes))
+
+	for i, tf := range timeframes {
+		wg.Add(1)
+		go func(index int, timeframe string) {
+			defer wg.Done()
+
+			// Get OHLCV data for this timeframe
+			// 获取该时间框架的 OHLCV 数据
+			lookback := lookbackDays[timeframe]
+			ohlcvData, err := m.GetOHLCV(ctx, symbol, timeframe, lookback)
+			if err != nil || len(ohlcvData) == 0 {
+				// Return empty indicator on error
+				// 出错时返回空指标
+				results[index] = MultiTimeframeIndicator{
+					Timeframe: timeframe,
+					EMA20:     math.NaN(),
+					EMA50:     math.NaN(),
+					MACD:      math.NaN(),
+					RSI7:      math.NaN(),
+					RSI14:     math.NaN(),
+				}
+				return
+			}
+
+			// Calculate indicators
+			// 计算技术指标
+			indicators := CalculateIndicators(ohlcvData)
+
+			// Extract the latest values
+			// 提取最新值
+			lastIdx := len(ohlcvData) - 1
+			result := MultiTimeframeIndicator{
+				Timeframe: timeframe,
+				EMA20:     math.NaN(),
+				EMA50:     math.NaN(),
+				MACD:      math.NaN(),
+				RSI7:      math.NaN(),
+				RSI14:     math.NaN(),
+			}
+
+			if len(indicators.EMA_20) > lastIdx && !math.IsNaN(indicators.EMA_20[lastIdx]) {
+				result.EMA20 = indicators.EMA_20[lastIdx]
+			}
+			if len(indicators.EMA_50) > lastIdx && !math.IsNaN(indicators.EMA_50[lastIdx]) {
+				result.EMA50 = indicators.EMA_50[lastIdx]
+			}
+			if len(indicators.MACD) > lastIdx && !math.IsNaN(indicators.MACD[lastIdx]) {
+				result.MACD = indicators.MACD[lastIdx]
+			}
+			if len(indicators.RSI_7) > lastIdx && !math.IsNaN(indicators.RSI_7[lastIdx]) {
+				result.RSI7 = indicators.RSI_7[lastIdx]
+			}
+			if len(indicators.RSI) > lastIdx && !math.IsNaN(indicators.RSI[lastIdx]) {
+				result.RSI14 = indicators.RSI[lastIdx]
+			}
+
+			results[index] = result
+		}(i, tf)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// FormatMultiTimeframeReport generates a formatted report of multi-timeframe indicators
+// FormatMultiTimeframeReport 生成多时间框架指标的格式化报告
+func FormatMultiTimeframeReport(indicators []MultiTimeframeIndicator) string {
+	var sb strings.Builder
+
+	if len(indicators) == 0 {
+		return ""
+	}
+
+	sb.WriteString("多时间框架指标：\n")
+
+	// Define display names for timeframes (Chinese)
+	// 定义时间框架的显示名称（中文）
+	displayNames := map[string]string{
+		"5m":  "5分钟",
+		"15m": "15分钟",
+		"1h":  "1小时",
+		"4h":  "4小时",
+	}
+
+	for _, ind := range indicators {
+		displayName := displayNames[ind.Timeframe]
+		if displayName == "" {
+			displayName = ind.Timeframe
+		}
+
+		// Format each indicator value (handle NaN cases)
+		// 格式化每个指标值（处理 NaN 情况）
+		ema20Str := "N/A"
+		if !math.IsNaN(ind.EMA20) {
+			ema20Str = fmt.Sprintf("%.3f", ind.EMA20)
+		}
+
+		ema50Str := "N/A"
+		if !math.IsNaN(ind.EMA50) {
+			ema50Str = fmt.Sprintf("%.3f", ind.EMA50)
+		}
+
+		macdStr := "N/A"
+		if !math.IsNaN(ind.MACD) {
+			macdStr = fmt.Sprintf("%.3f", ind.MACD)
+		}
+
+		rsi7Str := "N/A"
+		if !math.IsNaN(ind.RSI7) {
+			rsi7Str = fmt.Sprintf("%.2f", ind.RSI7)
+		}
+
+		rsi14Str := "N/A"
+		if !math.IsNaN(ind.RSI14) {
+			rsi14Str = fmt.Sprintf("%.2f", ind.RSI14)
+		}
+
+		// Format: "3分钟:  EMA20=86014.071, EMA50=86066.329, MACD=-28.439, RSI7=48.63, RSI14=51.64"
+		sb.WriteString(fmt.Sprintf("%-6s  EMA20=%s, EMA50=%s, MACD=%s, RSI7=%s, RSI14=%s\n",
+			displayName+":", ema20Str, ema50Str, macdStr, rsi7Str, rsi14Str))
 	}
 
 	return sb.String()

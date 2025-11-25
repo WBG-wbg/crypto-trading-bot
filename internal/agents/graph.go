@@ -377,6 +377,20 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 					}
 				}
 
+				// Multi-timeframe indicators analysis (always enabled)
+				// 多时间框架指标分析（默认启用）
+				g.logger.Info(fmt.Sprintf("  📈 正在获取 %s 多时间框架指标...", sym))
+				multiTimeframeIndicators := marketData.GetMultiTimeframeIndicators(ctx, binanceSymbol)
+				if len(multiTimeframeIndicators) > 0 {
+					multiTimeframeReport := dataflows.FormatMultiTimeframeReport(multiTimeframeIndicators)
+					if multiTimeframeReport != "" {
+						// Append multi-timeframe indicators report to main report
+						// 将多时间框架指标报告追加到主报告
+						report += "\n" + multiTimeframeReport
+						g.logger.Success(fmt.Sprintf("  ✅ %s 多时间框架指标分析完成", sym))
+					}
+				}
+
 				// Save to state (thread-safe)
 				mu.Lock()
 				if reports := g.state.Reports[sym]; reports != nil {
