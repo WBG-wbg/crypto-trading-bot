@@ -77,7 +77,7 @@ func TestCalculateTrailingStop(t *testing.T) {
 			highestPrice: 52000,
 			atr:          500,
 			side:         "long",
-			expected:     52000 - 2.5*500, // 50750
+			expected:     52000 - 3*500, // 50500 (BTCUSDT uses 3× multiplier)
 		},
 		{
 			name:         "Short position trailing stop",
@@ -85,7 +85,7 @@ func TestCalculateTrailingStop(t *testing.T) {
 			highestPrice: 48000, // This is actually lowest price for short
 			atr:          500,
 			side:         "short",
-			expected:     48000 + 2.5*500, // 49250
+			expected:     48000 + 3*500, // 49500 (BTCUSDT uses 3× multiplier)
 		},
 		{
 			name:         "ETH long with small ATR",
@@ -93,7 +93,7 @@ func TestCalculateTrailingStop(t *testing.T) {
 			highestPrice: 3200,
 			atr:          40,
 			side:         "long",
-			expected:     3200 - 2.5*40, // 3100
+			expected:     3200 - 3*40, // 3080 (ETHUSDT uses 3× multiplier)
 		},
 		{
 			name:         "SOL short with same multiplier",
@@ -101,7 +101,7 @@ func TestCalculateTrailingStop(t *testing.T) {
 			highestPrice: 95, // lowest price
 			atr:          5,
 			side:         "short",
-			expected:     95 + 2.5*5, // 107.5 (SOL uses 2.5x multiplier)
+			expected:     95 + 3*5, // 110 (SOLUSDT uses 3× multiplier)
 		},
 	}
 
@@ -200,14 +200,14 @@ func TestShouldUpdate(t *testing.T) {
 			name:        "SOL - change exceeds threshold",
 			symbol:      "SOLUSDT",
 			oldStopLoss: 100,
-			newStopLoss: 100.3, // 0.3% change (exceeds 0.2% threshold)
+			newStopLoss: 100.6, // 0.6% change (exceeds 0.5% threshold for SOL)
 			expected:    true,
 		},
 		{
 			name:        "SOL - change below threshold",
 			symbol:      "SOLUSDT",
 			oldStopLoss: 100,
-			newStopLoss: 100.1, // 0.1% change (below 0.2% threshold)
+			newStopLoss: 100.3, // 0.3% change (below 0.5% threshold for SOL)
 			expected:    false,
 		},
 	}
@@ -296,27 +296,27 @@ func TestGetConfig(t *testing.T) {
 		{
 			name:                       "BTC config",
 			symbol:                     "BTCUSDT",
-			expectedTrailingMultiplier: 2.5,
+			expectedTrailingMultiplier: 3.0,
 		},
 		{
 			name:                       "ETH config",
 			symbol:                     "ETHUSDT",
-			expectedTrailingMultiplier: 2.5,
+			expectedTrailingMultiplier: 3.0,
 		},
 		{
 			name:                       "SOL config - same multiplier",
 			symbol:                     "SOLUSDT",
-			expectedTrailingMultiplier: 2.5,
+			expectedTrailingMultiplier: 3.0,
 		},
 		{
 			name:                       "Unknown symbol - uses default",
 			symbol:                     "XYZUSDT",
-			expectedTrailingMultiplier: 2.5, // DEFAULT config
+			expectedTrailingMultiplier: 3.0, // DEFAULT config
 		},
 		{
 			name:                       "Symbol with slash",
 			symbol:                     "BTC/USDT",
-			expectedTrailingMultiplier: 2.5,
+			expectedTrailingMultiplier: 3.0,
 		},
 	}
 
@@ -354,7 +354,7 @@ func TestTrailingStopScenario(t *testing.T) {
 	// 2. 价格上涨到 52000，计算追踪止损
 	highestPrice := 52000.0
 	trailingStop1 := calc.CalculateTrailingStop(symbol, highestPrice, atr, "long")
-	expectedTrailing1 := 50750.0 // 52000 - 2.5*500
+	expectedTrailing1 := 50500.0 // 52000 - 3*500 (BTCUSDT uses 3× multiplier)
 	if math.Abs(trailingStop1-expectedTrailing1) > 0.01 {
 		t.Errorf("Trailing stop 1 = %.2f, expected %.2f", trailingStop1, expectedTrailing1)
 	}
@@ -375,7 +375,7 @@ func TestTrailingStopScenario(t *testing.T) {
 	// 5. 价格上涨到 53000，计算新的追踪止损
 	highestPrice = 53000.0
 	trailingStop2 := calc.CalculateTrailingStop(symbol, highestPrice, atr, "long")
-	expectedTrailing2 := 51750.0 // 53000 - 2.5*500
+	expectedTrailing2 := 51500.0 // 53000 - 3*500 (BTCUSDT uses 3× multiplier)
 	if math.Abs(trailingStop2-expectedTrailing2) > 0.01 {
 		t.Errorf("Trailing stop 2 = %.2f, expected %.2f", trailingStop2, expectedTrailing2)
 	}

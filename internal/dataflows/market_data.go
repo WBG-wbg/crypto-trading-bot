@@ -42,8 +42,9 @@ type TechnicalIndicators struct {
 	EMA_20    []float64 // EMA(20) - 20期指数移动平均（常用趋势线）
 	EMA_26    []float64
 	EMA_50    []float64 // EMA(50) - 50期指数移动平均（中期趋势线）
-	ATR       []float64 // ATR(14) - 14期平均真实波幅
-	ATR_3     []float64 // ATR(3) - 3期平均真实波幅（短期波动率）
+	ATR_14    []float64 // ATR(14) - 14期平均真实波幅
+	ATR_7     []float64 // ATR(7) - 7期平均真实波幅
+	ATR_3     []float64 // ATR(3) - 3期平均真实波幅
 	Volume    []float64
 
 	// New indicators for trend strength and confirmation
@@ -154,7 +155,9 @@ func (m *MarketData) GetOHLCV(ctx context.Context, symbol string, timeframe stri
 }
 
 // CalculateIndicators calculates technical indicators from OHLCV data
-func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
+// Optional parameter: atrPeriod (for trailing stop ATR calculation from longer timeframe)
+// 可选参数：atrPeriod（用于从长期时间周期计算追踪止损的 ATR）
+func CalculateIndicators(ohlcvData []OHLCV, atrPeriod ...int) *TechnicalIndicators {
 	if len(ohlcvData) == 0 {
 		return &TechnicalIndicators{}
 	}
@@ -172,6 +175,13 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 		volumes[i] = candle.Volume
 	}
 
+	// Determine ATR period for trailing stop (default 14)
+	// 确定追踪止损的 ATR 周期（默认 14）
+	//atrPeriodValue := 7
+	//if len(atrPeriod) > 0 && atrPeriod[0] > 0 {
+	//	atrPeriodValue = atrPeriod[0]
+	//}
+
 	// Calculate indicators
 	rsi := calculateRSI(closes, 14)
 	rsi7 := calculateRSI(closes, 7) // 新增：7期RSI（短期超买超卖判断）
@@ -184,8 +194,9 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 	ema20 := calculateEMA(closes, 20) // 新增：20期EMA（常用趋势线）
 	ema26 := calculateEMA(closes, 26)
 	ema50 := calculateEMA(closes, 50) // 新增：50期EMA（中期趋势线）
-	atr := calculateATR(highs, lows, closes, 14)
-	atr3 := calculateATR(highs, lows, closes, 3) // 新增：3期ATR（短期波动率）
+	atr14 := calculateATR(highs, lows, closes, 14)
+	atr7 := calculateATR(highs, lows, closes, 7)
+	atr3 := calculateATR(highs, lows, closes, 3) // 追踪止损 ATR（周期可配置）/ Trailing stop ATR (configurable period)
 
 	// New indicators for trend strength and volume confirmation
 	// 新增指标：趋势强度和成交量确认
@@ -207,7 +218,8 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 		EMA_20:    ema20, // 新增
 		EMA_26:    ema26,
 		EMA_50:    ema50, // 新增
-		ATR:       atr,
+		ATR_14:    atr14,
+		ATR_7:     atr7,
 		ATR_3:     atr3, // 新增
 		Volume:    volumes,
 
@@ -1129,14 +1141,19 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 
 	// === ATR(3) vs ATR(14) ===
 	atr3Val := 0.0
+	atr7Val := 0.0
 	atr14Val := 0.0
+
 	if len(indicators.ATR_3) > lastIdx && !math.IsNaN(indicators.ATR_3[lastIdx]) {
 		atr3Val = indicators.ATR_3[lastIdx]
 	}
-	if len(indicators.ATR) > lastIdx && !math.IsNaN(indicators.ATR[lastIdx]) {
-		atr14Val = indicators.ATR[lastIdx]
+	if len(indicators.ATR_7) > lastIdx && !math.IsNaN(indicators.ATR_7[lastIdx]) {
+		atr14Val = indicators.ATR_7[lastIdx]
 	}
-	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. ATR(14): %.1f\n\n", atr3Val, atr14Val))
+	if len(indicators.ATR_14) > lastIdx && !math.IsNaN(indicators.ATR_14[lastIdx]) {
+		atr14Val = indicators.ATR_14[lastIdx]
+	}
+	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. ATR(7): %.1f vs. ATR(14): %.1f\n\n", atr3Val, atr7Val, atr14Val))
 
 	// === 当前成交量 vs 平均成交量 ===
 	// === Current Volume vs Average Volume ===

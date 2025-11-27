@@ -13,12 +13,12 @@ import (
 type TrailingStopConfig struct {
 	// Initial stop-loss parameters
 	// 初始止损参数
-	InitialATRPeriod     int     // ATR period for initial stop, default 3 / 初始止损的 ATR 周期，默认 3
+	InitialATRPeriod     int     // ATR period for initial stop, default 14 (Wilder's standard) / 初始止损的 ATR 周期，默认 14（标准 Wilder 周期）
 	InitialATRMultiplier float64 // ATR multiplier for initial stop, default 2.5 / 初始止损的 ATR 倍数，默认 2.5
 
 	// Trailing stop parameters
 	// 追踪止损参数
-	TrailingATRPeriod     int     // ATR period for trailing stop, default 3 / 追踪止损的 ATR 周期，默认 3
+	TrailingATRPeriod     int     // ATR period for trailing stop, default 14 (Wilder's standard) / 追踪止损的 ATR 周期，默认 14（标准 Wilder 周期）
 	TrailingATRMultiplier float64 // ATR multiplier for trailing stop, default 2.0 / 追踪止损的 ATR 倍数，默认 2.0
 
 	// Update control
@@ -34,12 +34,15 @@ type TrailingStopConfig struct {
 // This calculator replaces LLM-based stop-loss calculation with deterministic formulas.
 // 此计算器使用确定性公式替代基于 LLM 的止损计算。
 //
+// ATR Source: Calculated from longer timeframe (e.g., 4h) with configurable period (TRAILING_STOP_ATR_PERIOD in .env, default 7)
+// ATR 来源：从长期时间周期（如 4h）计算，周期可配置（.env 中的 TRAILING_STOP_ATR_PERIOD，默认 7）
+//
 // Formulas:
 // 公式：
-//   - Initial stop (long): entry_price - 2.5 × ATR(3)
-//   - Initial stop (short): entry_price + 2.5 × ATR(3)
-//   - Trailing stop (long): highest_price - 2.0 × ATR(3)
-//   - Trailing stop (short): lowest_price + 2.0 × ATR(3)
+//   - Initial stop (long): entry_price - 2.5 × ATR(from longer timeframe)
+//   - Initial stop (short): entry_price + 2.5 × ATR(from longer timeframe)
+//   - Trailing stop (long): highest_price - 2.0-3.0 × ATR(from longer timeframe)
+//   - Trailing stop (short): lowest_price + 2.0-3.0 × ATR(from longer timeframe)
 //
 // Rules:
 // 规则：
@@ -86,10 +89,10 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// Default configuration (used as fallback for undefined symbols)
 	// 默认配置（用于未定义的币种）
 	defaultConfig := TrailingStopConfig{
-		InitialATRPeriod:      3,
+		InitialATRPeriod:      7, // 使用 ATR(7) - 标准 Wilder 周期
 		InitialATRMultiplier:  2.5,
-		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.5,
+		TrailingATRPeriod:     7, // 使用 ATR(7) - 标准 Wilder 周期
+		TrailingATRMultiplier: 3,
 		UpdateThreshold:       0.3, // 0.3% - update only if change exceeds this
 		MinStopDistance:       0.5, // 0.5% - minimum stop distance from entry
 		MaxStopDistance:       5.0, // 5.0% - maximum stop distance from entry
@@ -100,10 +103,10 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// BTC - Lower volatility, moderate stop distance
 	// BTC - 波动较小，止损距离适中
 	configs["BTCUSDT"] = TrailingStopConfig{
-		InitialATRPeriod:      3,
+		InitialATRPeriod:      7,
 		InitialATRMultiplier:  2.5,
-		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.5,
+		TrailingATRPeriod:     7,
+		TrailingATRMultiplier: 3,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       6.0,
@@ -112,10 +115,10 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// ETH - Similar to BTC
 	// ETH - 类似 BTC
 	configs["ETHUSDT"] = TrailingStopConfig{
-		InitialATRPeriod:      3,
+		InitialATRPeriod:      7,
 		InitialATRMultiplier:  2.5,
-		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.5,
+		TrailingATRPeriod:     7,
+		TrailingATRMultiplier: 3,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       6.0,
@@ -124,10 +127,10 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// SOL - Higher volatility, wider stop distance
 	// SOL - 波动较大，止损距离稍宽
 	configs["SOLUSDT"] = TrailingStopConfig{
-		InitialATRPeriod:      3,
+		InitialATRPeriod:      7,
 		InitialATRMultiplier:  2.5,
-		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.5, // Slightly wider / 稍微宽松一点
+		TrailingATRPeriod:     7,
+		TrailingATRMultiplier: 3, // Slightly wider / 稍微宽松一点
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       8.0,
@@ -136,10 +139,10 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// BNB - Moderate volatility
 	// BNB - 中等波动
 	configs["BNBUSDT"] = TrailingStopConfig{
-		InitialATRPeriod:      3,
+		InitialATRPeriod:      7,
 		InitialATRMultiplier:  2.5,
-		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.5,
+		TrailingATRPeriod:     7,
+		TrailingATRMultiplier: 3,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       7.0,
@@ -148,10 +151,10 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// XRP - Higher volatility
 	// XRP - 波动较大
 	configs["XRPUSDT"] = TrailingStopConfig{
-		InitialATRPeriod:      3,
+		InitialATRPeriod:      7,
 		InitialATRMultiplier:  2.5,
-		TrailingATRPeriod:     3,
-		TrailingATRMultiplier: 2.5,
+		TrailingATRPeriod:     7,
+		TrailingATRMultiplier: 3,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       8.0,

@@ -14,11 +14,11 @@ func TestLoadConfig(t *testing.T) {
 
 	// 验证配置是否正确加载
 	// Verify config is loaded correctly
-	if cfg.CryptoSymbol == "" {
-		t.Errorf("Expected CryptoSymbol to be set, got empty string")
+	if len(cfg.CryptoSymbols) == 0 {
+		t.Errorf("Expected CryptoSymbols to be set, got empty list")
 	}
 
-	t.Logf("Successfully loaded config with CryptoSymbol: %s", cfg.CryptoSymbol)
+	t.Logf("Successfully loaded config with CryptoSymbols: %v", cfg.CryptoSymbols)
 }
 
 func TestCalculateLookbackDays(t *testing.T) {

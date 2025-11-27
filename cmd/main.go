@@ -445,11 +445,11 @@ func main() {
 					reports := state.GetSymbolReports(symbol)
 					if reports != nil && reports.TechnicalIndicators != nil {
 						indicators := reports.TechnicalIndicators
-						if len(indicators.ATR) > 0 {
+						if len(indicators.ATR_7) > 0 {
 							// Get latest ATR value
-							lastIdx := len(indicators.ATR) - 1
-							if lastIdx >= 0 && !math.IsNaN(indicators.ATR[lastIdx]) {
-								atrValue = indicators.ATR[lastIdx]
+							lastIdx := len(indicators.ATR_7) - 1
+							if lastIdx >= 0 && !math.IsNaN(indicators.ATR_7[lastIdx]) {
+								atrValue = indicators.ATR_7[lastIdx]
 								atrPercent := (atrValue / result.Price) * 100
 								log.Info(fmt.Sprintf("当前 ATR: %.2f (%.2f%% of price)", atrValue, atrPercent))
 							}
