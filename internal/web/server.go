@@ -326,6 +326,7 @@ func (s *Server) handleLivePositions(ctx context.Context, c *app.RequestContext)
 		ROE              float64 `json:"roe"` // Return on Equity percentage
 		Leverage         int     `json:"leverage"`
 		LiquidationPrice float64 `json:"liquidation_price"`
+		CurrentStopLoss  float64 `json:"current_stop_loss"` // Current stop-loss price / 当前止损价格
 	}
 
 	var positions []PositionResponse
@@ -362,6 +363,16 @@ func (s *Server) handleLivePositions(ctx context.Context, c *app.RequestContext)
 				currentPrice = pos.CurrentPrice
 			}
 
+			// Get current stop-loss price from stop-loss manager
+			// 从止损管理器获取当前止损价格
+			currentStopLoss := 0.0
+			if s.stopLossManager != nil {
+				managedPos := s.stopLossManager.GetPosition(symbol)
+				if managedPos != nil {
+					currentStopLoss = managedPos.CurrentStopLoss
+				}
+			}
+
 			positions = append(positions, PositionResponse{
 				Symbol:           symbol,
 				Side:             pos.Side,
@@ -372,6 +383,7 @@ func (s *Server) handleLivePositions(ctx context.Context, c *app.RequestContext)
 				ROE:              roe,
 				Leverage:         pos.Leverage,
 				LiquidationPrice: pos.LiquidationPrice,
+				CurrentStopLoss:  currentStopLoss,
 			})
 		}
 	}

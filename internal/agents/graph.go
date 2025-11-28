@@ -23,13 +23,14 @@ import (
 // SymbolReports holds reports for a single symbol
 // SymbolReports 保存单个交易对的报告
 type SymbolReports struct {
-	Symbol              string
-	MarketReport        string
-	CryptoReport        string
-	SentimentReport     string
-	PositionInfo        string
-	OHLCVData           []dataflows.OHLCV
-	TechnicalIndicators *dataflows.TechnicalIndicators
+	Symbol                    string
+	MarketReport              string
+	CryptoReport              string
+	SentimentReport           string
+	PositionInfo              string
+	OHLCVData                 []dataflows.OHLCV
+	TechnicalIndicators       *dataflows.TechnicalIndicators // 主时间周期的技术指标 / Primary timeframe indicators
+	LongerTechnicalIndicators *dataflows.TechnicalIndicators // 长期时间周期的技术指标 / Longer timeframe indicators
 }
 
 // TradeDecision represents a structured trading decision from LLM (for JSON Schema output)
@@ -350,6 +351,7 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 
 				// Multi-timeframe analysis (if enabled)
 				// 多时间周期分析（如果启用）
+				var longerIndicators *dataflows.TechnicalIndicators
 				if g.config.EnableMultiTimeframe {
 					g.logger.Info(fmt.Sprintf("  🔄 正在获取 %s 更长期时间周期数据 (%s)...", sym, g.config.CryptoLongerTimeframe))
 
@@ -359,9 +361,9 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 					if err != nil {
 						g.logger.Warning(fmt.Sprintf("  ⚠️  %s 更长期时间周期数据获取失败: %v", sym, err))
 					} else {
-						// Calculate indicators for longer timeframe
-						// 计算更长期时间周期的指标
-						longerIndicators := dataflows.CalculateIndicators(longerOHLCV)
+						// Calculate indicators for longer timeframe (with configurable ATR period for trailing stop)
+						// 计算更长期时间周期的指标（使用可配置的 ATR 周期用于追踪止损）
+						longerIndicators = dataflows.CalculateIndicators(longerOHLCV, g.config.TrailingStopATRPeriod)
 
 						// Generate longer timeframe report
 						// 生成更长期时间周期报告
@@ -375,11 +377,26 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 					}
 				}
 
+				// Multi-timeframe indicators analysis (always enabled)
+				// 多时间框架指标分析（默认启用）
+				g.logger.Info(fmt.Sprintf("  📈 正在获取 %s 多时间框架指标...", sym))
+				multiTimeframeIndicators := marketData.GetMultiTimeframeIndicators(ctx, binanceSymbol)
+				if len(multiTimeframeIndicators) > 0 {
+					multiTimeframeReport := dataflows.FormatMultiTimeframeReport(multiTimeframeIndicators)
+					if multiTimeframeReport != "" {
+						// Append multi-timeframe indicators report to main report
+						// 将多时间框架指标报告追加到主报告
+						report += "\n" + multiTimeframeReport
+						g.logger.Success(fmt.Sprintf("  ✅ %s 多时间框架指标分析完成", sym))
+					}
+				}
+
 				// Save to state (thread-safe)
 				mu.Lock()
 				if reports := g.state.Reports[sym]; reports != nil {
 					reports.OHLCVData = ohlcvData
 					reports.TechnicalIndicators = indicators
+					reports.LongerTechnicalIndicators = longerIndicators // 保存长期时间周期指标 / Save longer timeframe indicators
 				}
 				mu.Unlock()
 
@@ -615,6 +632,53 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				if err := g.stopLossManager.CheckStopLossOrderStatus(ctx, sym); err != nil {
 					g.logger.Warning(fmt.Sprintf("  ⚠️  检查 %s 止损单状态失败: %v", sym, err))
 				}
+
+				// Auto-update trailing stop (local calculation, replaces LLM)
+				// 自动更新追踪止损（本地计算，替代 LLM）
+				// Only process symbols with active positions
+				// 只处理有持仓的币种
+				if g.stopLossManager.HasPosition(sym) {
+					// Get ATR_3 from longer timeframe data (preferred) or fallback to primary timeframe
+					// 优先从长期时间周期数据获取 ATR_7，如果不可用则回退到主时间周期
+					g.state.mu.RLock()
+					symbolReport, exists := g.state.Reports[sym]
+					g.state.mu.RUnlock()
+
+					if !exists {
+						g.logger.Warning(fmt.Sprintf("  ⚠️  %s 有持仓但缺少市场数据，无法更新追踪止损", sym))
+					} else {
+						var latestATR7 float64
+						var atrSource string // 用于日志显示 ATR 来源 / For logging ATR source
+
+						// Priority 1: Use longer timeframe ATR_7 (e.g., 1h)
+						// 优先级1：使用长期时间周期的 ATR_7（如 1h）
+						if symbolReport.LongerTechnicalIndicators != nil && len(symbolReport.LongerTechnicalIndicators.ATR_7) > 0 {
+							latestATR7 = symbolReport.LongerTechnicalIndicators.ATR_7[len(symbolReport.LongerTechnicalIndicators.ATR_7)-1]
+							atrSource = fmt.Sprintf("%s", g.config.CryptoLongerTimeframe)
+						} else if symbolReport.TechnicalIndicators != nil && len(symbolReport.TechnicalIndicators.ATR_3) > 0 {
+							// Fallback: Use primary timeframe ATR_7 (e.g., 3m)
+							// 回退：使用主时间周期的 ATR_7（如 3m）
+							latestATR7 = symbolReport.TechnicalIndicators.ATR_7[len(symbolReport.TechnicalIndicators.ATR_3)-1]
+							atrSource = fmt.Sprintf("%s", g.config.CryptoTimeframe)
+							g.logger.Warning(fmt.Sprintf("  ⚠️  %s 长期数据不可用，使用主时间周期(%s)的ATR_3", sym, g.config.CryptoTimeframe))
+						} else {
+							g.logger.Warning(fmt.Sprintf("  ⚠️  %s 有持仓但所有时间周期的ATR_3数据均为空，无法更新追踪止损", sym))
+							latestATR7 = 0 // 设为0表示无效 / Set to 0 to indicate invalid
+						}
+
+						if latestATR7 > 0 {
+							// Call AutoUpdateTrailingStop to update stop-loss based on local calculation
+							// 调用 AutoUpdateTrailingStop 基于本地计算更新止损
+							if err := g.stopLossManager.AutoUpdateTrailingStop(ctx, sym, latestATR7); err != nil {
+								g.logger.Warning(fmt.Sprintf("  ⚠️  %s 自动追踪止损更新失败: %v", sym, err))
+							} else {
+								g.logger.Info(fmt.Sprintf("  ✓ %s 追踪止损检查完成 (ATR_3=%.2f, 来源:%s)", sym, latestATR7, atrSource))
+							}
+						}
+					}
+				}
+				// If no position exists, skip trailing stop update silently
+				// 如果无持仓，静默跳过追踪止损更新（不输出日志）
 
 				// 获取持仓信息（不包含账户信息）/ Get position info (without account info)
 				posInfo := g.executor.GetPositionOnly(ctx, sym, g.stopLossManager)

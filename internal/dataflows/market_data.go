@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adshao/go-binance/v2/futures"
@@ -40,8 +41,10 @@ type TechnicalIndicators struct {
 	EMA_12    []float64
 	EMA_20    []float64 // EMA(20) - 20期指数移动平均（常用趋势线）
 	EMA_26    []float64
-	ATR       []float64 // ATR(14) - 14期平均真实波幅
-	ATR_3     []float64 // ATR(3) - 3期平均真实波幅（短期波动率）
+	EMA_50    []float64 // EMA(50) - 50期指数移动平均（中期趋势线）
+	ATR_14    []float64 // ATR(14) - 14期平均真实波幅
+	ATR_7     []float64 // ATR(7) - 7期平均真实波幅
+	ATR_3     []float64 // ATR(3) - 3期平均真实波幅
 	Volume    []float64
 
 	// New indicators for trend strength and confirmation
@@ -50,6 +53,17 @@ type TechnicalIndicators struct {
 	DI_Plus     []float64 // +DI - 上升趋向指标
 	DI_Minus    []float64 // -DI - 下降趋向指标
 	VolumeRatio []float64 // Volume Ratio - 成交量比率
+}
+
+// MultiTimeframeIndicator holds key indicators for a single timeframe
+// MultiTimeframeIndicator 存储单个时间框架的关键指标
+type MultiTimeframeIndicator struct {
+	Timeframe string  // 时间框架（如 "3m", "5m", "15m", "1h", "4h"）
+	EMA20     float64 // EMA(20) - 20期指数移动平均
+	EMA50     float64 // EMA(50) - 50期指数移动平均
+	MACD      float64 // MACD - 动量指标
+	RSI7      float64 // RSI(7) - 7期相对强弱指数
+	RSI14     float64 // RSI(14) - 14期相对强弱指数
 }
 
 // MarketData handles crypto market data fetching
@@ -141,7 +155,9 @@ func (m *MarketData) GetOHLCV(ctx context.Context, symbol string, timeframe stri
 }
 
 // CalculateIndicators calculates technical indicators from OHLCV data
-func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
+// Optional parameter: atrPeriod (for trailing stop ATR calculation from longer timeframe)
+// 可选参数：atrPeriod（用于从长期时间周期计算追踪止损的 ATR）
+func CalculateIndicators(ohlcvData []OHLCV, atrPeriod ...int) *TechnicalIndicators {
 	if len(ohlcvData) == 0 {
 		return &TechnicalIndicators{}
 	}
@@ -159,6 +175,13 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 		volumes[i] = candle.Volume
 	}
 
+	// Determine ATR period for trailing stop (default 14)
+	// 确定追踪止损的 ATR 周期（默认 14）
+	//atrPeriodValue := 7
+	//if len(atrPeriod) > 0 && atrPeriod[0] > 0 {
+	//	atrPeriodValue = atrPeriod[0]
+	//}
+
 	// Calculate indicators
 	rsi := calculateRSI(closes, 14)
 	rsi7 := calculateRSI(closes, 7) // 新增：7期RSI（短期超买超卖判断）
@@ -170,8 +193,10 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 	ema12 := calculateEMA(closes, 12)
 	ema20 := calculateEMA(closes, 20) // 新增：20期EMA（常用趋势线）
 	ema26 := calculateEMA(closes, 26)
-	atr := calculateATR(highs, lows, closes, 14)
-	atr3 := calculateATR(highs, lows, closes, 3) // 新增：3期ATR（短期波动率）
+	ema50 := calculateEMA(closes, 50) // 新增：50期EMA（中期趋势线）
+	atr14 := calculateATR(highs, lows, closes, 14)
+	atr7 := calculateATR(highs, lows, closes, 7)
+	atr3 := calculateATR(highs, lows, closes, 3) // 追踪止损 ATR（周期可配置）/ Trailing stop ATR (configurable period)
 
 	// New indicators for trend strength and volume confirmation
 	// 新增指标：趋势强度和成交量确认
@@ -192,7 +217,9 @@ func CalculateIndicators(ohlcvData []OHLCV) *TechnicalIndicators {
 		EMA_12:    ema12,
 		EMA_20:    ema20, // 新增
 		EMA_26:    ema26,
-		ATR:       atr,
+		EMA_50:    ema50, // 新增
+		ATR_14:    atr14,
+		ATR_7:     atr7,
 		ATR_3:     atr3, // 新增
 		Volume:    volumes,
 
@@ -627,7 +654,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 	}
 
 	lastIdx := len(ohlcvData) - 1
-	latestMidPrice := (ohlcvData[lastIdx].High + ohlcvData[lastIdx].Low) / 2
+	latestClosePrice := ohlcvData[lastIdx].Close
 
 	// === 标题 ===
 	// === Header ===
@@ -670,7 +697,7 @@ func FormatIndicatorReport(symbol string, timeframe string, ohlcvData []OHLCV, i
 		currentADX = indicators.ADX[lastIdx]
 	}
 
-	sb.WriteString(fmt.Sprintf("当前中间价 = %.1f, EMA(12) = %.1f, EMA(26) = %.1f\n", latestMidPrice, currentEMA12, currentEMA26))
+	sb.WriteString(fmt.Sprintf("当前价格 = %.1f, EMA(12) = %.1f, EMA(26) = %.1f\n", latestClosePrice, currentEMA12, currentEMA26))
 	sb.WriteString(fmt.Sprintf("MACD = %.1f,  RSI(7) = %.1f, RSI(14) = %.1f, ADX = %.1f\n\n", currentMACD, currentRSI7, currentRSI14, currentADX))
 	sb.WriteString(fmt.Sprintf("下述所有价格或信号数据均按时间从旧到新排列。\n\n"))
 
@@ -1103,25 +1130,30 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 
 	// === EMA(20) vs 50-Period EMA ===
 	ema20Val := 0.0
-	sma50Val := 0.0
+	ema50Val := 0.0
 	if len(indicators.EMA_20) > lastIdx && !math.IsNaN(indicators.EMA_20[lastIdx]) {
 		ema20Val = indicators.EMA_20[lastIdx]
 	}
-	if len(indicators.SMA_50) > lastIdx && !math.IsNaN(indicators.SMA_50[lastIdx]) {
-		sma50Val = indicators.SMA_50[lastIdx]
+	if len(indicators.EMA_50) > lastIdx && !math.IsNaN(indicators.EMA_50[lastIdx]) {
+		ema50Val = indicators.EMA_50[lastIdx]
 	}
-	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. EMA(50): %.1f\n\n", ema20Val, sma50Val))
+	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. EMA(50): %.1f\n\n", ema20Val, ema50Val))
 
-	// === ATR(3) vs 14-Period ATR ===
+	// === ATR(3) vs ATR(7) vs ATR(14) ===
 	atr3Val := 0.0
+	atr7Val := 0.0
 	atr14Val := 0.0
+
 	if len(indicators.ATR_3) > lastIdx && !math.IsNaN(indicators.ATR_3[lastIdx]) {
 		atr3Val = indicators.ATR_3[lastIdx]
 	}
-	if len(indicators.ATR) > lastIdx && !math.IsNaN(indicators.ATR[lastIdx]) {
-		atr14Val = indicators.ATR[lastIdx]
+	if len(indicators.ATR_7) > lastIdx && !math.IsNaN(indicators.ATR_7[lastIdx]) {
+		atr7Val = indicators.ATR_7[lastIdx]
 	}
-	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. ATR(14): %.1f\n\n", atr3Val, atr14Val))
+	if len(indicators.ATR_14) > lastIdx && !math.IsNaN(indicators.ATR_14[lastIdx]) {
+		atr14Val = indicators.ATR_14[lastIdx]
+	}
+	sb.WriteString(fmt.Sprintf("ATR(3): %.1f vs. ATR(7): %.1f vs. ATR(14): %.1f\n\n", atr3Val, atr7Val, atr14Val))
 
 	// === 当前成交量 vs 平均成交量 ===
 	// === Current Volume vs Average Volume ===
@@ -1146,6 +1178,152 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 	// === RSI(14) Series (Last 10 periods) ===
 	if len(indicators.RSI) > lastIdx {
 		sb.WriteString(fmt.Sprintf("RSI(14): %s\n\n", formatSeries(indicators.RSI, startIdx, lastIdx, 1)))
+	}
+
+	return sb.String()
+}
+
+// GetMultiTimeframeIndicators fetches and calculates indicators for multiple timeframes in parallel
+// GetMultiTimeframeIndicators 并行获取多个时间框架的数据并计算指标
+func (m *MarketData) GetMultiTimeframeIndicators(ctx context.Context, symbol string) []MultiTimeframeIndicator {
+	// Define fixed timeframes for multi-timeframe analysis
+	// 定义固定的多时间框架列表（经典的多周期分析组合）
+	timeframes := []string{"5m", "15m", "1h", "4h"}
+
+	// Calculate lookback days for each timeframe
+	// 为每个时间框架计算回看天数
+	// 注意：币安API限制最多返回1000根K线
+	lookbackDays := map[string]int{
+		"5m":  3,  // ~864 candles (3天 × 24h × 60m / 5m = 864)
+		"15m": 5,  // ~480 candles (5天 × 24h × 60m / 15m = 480)
+		"1h":  10, // ~240 candles (10天 × 24h / 1h = 240)
+		"4h":  15, // ~90 candles (15天 × 24h / 4h = 90)
+	}
+
+	// Use goroutines to fetch data in parallel
+	// 使用 goroutine 并行获取数据
+	var wg sync.WaitGroup
+	results := make([]MultiTimeframeIndicator, len(timeframes))
+
+	for i, tf := range timeframes {
+		wg.Add(1)
+		go func(index int, timeframe string) {
+			defer wg.Done()
+
+			// Get OHLCV data for this timeframe
+			// 获取该时间框架的 OHLCV 数据
+			lookback := lookbackDays[timeframe]
+			ohlcvData, err := m.GetOHLCV(ctx, symbol, timeframe, lookback)
+			if err != nil || len(ohlcvData) == 0 {
+				// Return empty indicator on error
+				// 出错时返回空指标
+				results[index] = MultiTimeframeIndicator{
+					Timeframe: timeframe,
+					EMA20:     math.NaN(),
+					EMA50:     math.NaN(),
+					MACD:      math.NaN(),
+					RSI7:      math.NaN(),
+					RSI14:     math.NaN(),
+				}
+				return
+			}
+
+			// Calculate indicators
+			// 计算技术指标
+			indicators := CalculateIndicators(ohlcvData)
+
+			// Extract the latest values
+			// 提取最新值
+			lastIdx := len(ohlcvData) - 1
+			result := MultiTimeframeIndicator{
+				Timeframe: timeframe,
+				EMA20:     math.NaN(),
+				EMA50:     math.NaN(),
+				MACD:      math.NaN(),
+				RSI7:      math.NaN(),
+				RSI14:     math.NaN(),
+			}
+
+			if len(indicators.EMA_20) > lastIdx && !math.IsNaN(indicators.EMA_20[lastIdx]) {
+				result.EMA20 = indicators.EMA_20[lastIdx]
+			}
+			if len(indicators.EMA_50) > lastIdx && !math.IsNaN(indicators.EMA_50[lastIdx]) {
+				result.EMA50 = indicators.EMA_50[lastIdx]
+			}
+			if len(indicators.MACD) > lastIdx && !math.IsNaN(indicators.MACD[lastIdx]) {
+				result.MACD = indicators.MACD[lastIdx]
+			}
+			if len(indicators.RSI_7) > lastIdx && !math.IsNaN(indicators.RSI_7[lastIdx]) {
+				result.RSI7 = indicators.RSI_7[lastIdx]
+			}
+			if len(indicators.RSI) > lastIdx && !math.IsNaN(indicators.RSI[lastIdx]) {
+				result.RSI14 = indicators.RSI[lastIdx]
+			}
+
+			results[index] = result
+		}(i, tf)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// FormatMultiTimeframeReport generates a formatted report of multi-timeframe indicators
+// FormatMultiTimeframeReport 生成多时间框架指标的格式化报告
+func FormatMultiTimeframeReport(indicators []MultiTimeframeIndicator) string {
+	var sb strings.Builder
+
+	if len(indicators) == 0 {
+		return ""
+	}
+
+	sb.WriteString("多时间框架指标：\n")
+
+	// Define display names for timeframes (Chinese)
+	// 定义时间框架的显示名称（中文）
+	displayNames := map[string]string{
+		"5m":  "5分钟",
+		"15m": "15分钟",
+		"1h":  "1小时",
+		"4h":  "4小时",
+	}
+
+	for _, ind := range indicators {
+		displayName := displayNames[ind.Timeframe]
+		if displayName == "" {
+			displayName = ind.Timeframe
+		}
+
+		// Format each indicator value (handle NaN cases)
+		// 格式化每个指标值（处理 NaN 情况）
+		ema20Str := "N/A"
+		if !math.IsNaN(ind.EMA20) {
+			ema20Str = fmt.Sprintf("%.3f", ind.EMA20)
+		}
+
+		ema50Str := "N/A"
+		if !math.IsNaN(ind.EMA50) {
+			ema50Str = fmt.Sprintf("%.3f", ind.EMA50)
+		}
+
+		macdStr := "N/A"
+		if !math.IsNaN(ind.MACD) {
+			macdStr = fmt.Sprintf("%.3f", ind.MACD)
+		}
+
+		rsi7Str := "N/A"
+		if !math.IsNaN(ind.RSI7) {
+			rsi7Str = fmt.Sprintf("%.2f", ind.RSI7)
+		}
+
+		rsi14Str := "N/A"
+		if !math.IsNaN(ind.RSI14) {
+			rsi14Str = fmt.Sprintf("%.2f", ind.RSI14)
+		}
+
+		// Format: "3分钟:  EMA20=86014.071, EMA50=86066.329, MACD=-28.439, RSI7=48.63, RSI14=51.64"
+		sb.WriteString(fmt.Sprintf("%-6s  EMA20=%s, EMA50=%s, MACD=%s, RSI7=%s, RSI14=%s\n",
+			displayName+":", ema20Str, ema50Str, macdStr, rsi7Str, rsi14Str))
 	}
 
 	return sb.String()

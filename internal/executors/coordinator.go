@@ -300,7 +300,7 @@ func (tc *TradeCoordinator) calculatePositionSize(ctx context.Context, symbol st
 原因分析：
 - LLM 建议仓位: %.1f%% 资金 = $%.2f 保证金
 - 杠杆倍数: %dx
-- 订单价值: $%.2f × %d = $%.2f
+- 订单价值: %.4f %s × $%.2f = $%.2f
 - 精度调整: %.4f → %.4f (导致订单价值降低)
 
 解决方案：
@@ -311,7 +311,7 @@ func (tc *TradeCoordinator) calculatePositionSize(ctx context.Context, symbol st
 			notionalValue, minNotional,
 			positionSizePercent, fundsToUse,
 			actualLeverage,
-			adjustedSize, actualLeverage, notionalValue,
+			adjustedSize, symbol, currentPrice, notionalValue,
 			rawSize, adjustedSize,
 			(minNotional/float64(actualLeverage)/balance)*100,
 			balance, actualLeverage,

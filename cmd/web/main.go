@@ -566,34 +566,34 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 
 				// Update stop-loss if LLM provides new stop-loss price
 				// 如果 LLM 提供了新的止损价格，则更新止损
-				if symbolDecision.StopLoss > 0 {
-					// Check if stop-loss price has changed
-					// 检查止损价格是否有变化
-					currentPos := globalStopLossManager.GetPosition(symbol)
-					if currentPos != nil && currentPos.CurrentStopLoss == symbolDecision.StopLoss {
-						// Stop-loss price unchanged, skip update
-						// 止损价格未变化，跳过更新
-						log.Info(fmt.Sprintf("💡 %s 止损价格未变化 (%.2f)，无需更新", symbol, symbolDecision.StopLoss))
-						executionResults[symbol] = fmt.Sprintf("观望，止损价格未变化: %.2f", symbolDecision.StopLoss)
-					} else {
-						// Stop-loss price changed, execute update
-						// 止损价格有变化，执行更新
-						err := globalStopLossManager.UpdateStopLoss(ctx, symbol, symbolDecision.StopLoss, symbolDecision.Reason)
-						if err != nil {
-							log.Warning(fmt.Sprintf("⚠️  更新 %s 止损失败: %v", symbol, err))
-							executionResults[symbol] = fmt.Sprintf("观望，更新止损失败: %v", err)
-						} else {
-							oldStop := "无"
-							if currentPos != nil {
-								oldStop = fmt.Sprintf("%.2f", currentPos.CurrentStopLoss)
-							}
-							log.Success(fmt.Sprintf("✅ %s 止损更新处理完成: %s → %.2f", symbol, oldStop, symbolDecision.StopLoss))
-							executionResults[symbol] = fmt.Sprintf("观望，止损处理: %s → %.2f", oldStop, symbolDecision.StopLoss)
-						}
-					}
-				} else {
-					executionResults[symbol] = "观望，不执行交易"
-				}
+				//if symbolDecision.StopLoss > 0 {
+				//	// Check if stop-loss price has changed
+				//	// 检查止损价格是否有变化
+				//	currentPos := globalStopLossManager.GetPosition(symbol)
+				//	if currentPos != nil && currentPos.CurrentStopLoss == symbolDecision.StopLoss {
+				//		// Stop-loss price unchanged, skip update
+				//		// 止损价格未变化，跳过更新
+				//		log.Info(fmt.Sprintf("💡 %s 止损价格未变化 (%.2f)，无需更新", symbol, symbolDecision.StopLoss))
+				//		executionResults[symbol] = fmt.Sprintf("观望，止损价格未变化: %.2f", symbolDecision.StopLoss)
+				//	} else {
+				//		// Stop-loss price changed, execute update
+				//		// 止损价格有变化，执行更新
+				//		err := globalStopLossManager.UpdateStopLoss(ctx, symbol, symbolDecision.StopLoss, symbolDecision.Reason)
+				//		if err != nil {
+				//			log.Warning(fmt.Sprintf("⚠️  更新 %s 止损失败: %v", symbol, err))
+				//			executionResults[symbol] = fmt.Sprintf("观望，更新止损失败: %v", err)
+				//		} else {
+				//			oldStop := "无"
+				//			if currentPos != nil {
+				//				oldStop = fmt.Sprintf("%.2f", currentPos.CurrentStopLoss)
+				//			}
+				//			log.Success(fmt.Sprintf("✅ %s 止损更新处理完成: %s → %.2f", symbol, oldStop, symbolDecision.StopLoss))
+				//			executionResults[symbol] = fmt.Sprintf("观望，止损处理: %s → %.2f", oldStop, symbolDecision.StopLoss)
+				//		}
+				//	}
+				//} else {
+				//	executionResults[symbol] = "观望，不执行交易"
+				//}
 				continue
 			}
 
@@ -702,12 +702,12 @@ func runTradingAnalysis(ctx context.Context, cfg *config.Config, log *logger.Col
 					reports := state.GetSymbolReports(symbol)
 					if reports != nil && reports.TechnicalIndicators != nil {
 						indicators := reports.TechnicalIndicators
-						if len(indicators.ATR) > 0 {
+						if len(indicators.ATR_7) > 0 {
 							// Get latest ATR value
 							// 获取最新 ATR 值
-							lastIdx := len(indicators.ATR) - 1
-							if lastIdx >= 0 && !math.IsNaN(indicators.ATR[lastIdx]) {
-								atrValue = indicators.ATR[lastIdx]
+							lastIdx := len(indicators.ATR_7) - 1
+							if lastIdx >= 0 && !math.IsNaN(indicators.ATR_7[lastIdx]) {
+								atrValue = indicators.ATR_7[lastIdx]
 								atrPercent := (atrValue / result.Price) * 100
 								log.Info(fmt.Sprintf("当前 ATR: %.2f (%.2f%% of price)", atrValue, atrPercent))
 							}
