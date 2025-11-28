@@ -148,7 +148,7 @@ LLM_BACKEND_URL=https://api.deepseek.com
 OPENAI_API_KEY=你的-api-key
 
 # 交易策略 Prompt
-TRADER_PROMPT_PATH=prompts/trader_json.txt
+TRADER_PROMPT_PATH=prompts/trader_json_no_trailing_stop.txt
 
 # ===================================================================
 # 币安交易配置
