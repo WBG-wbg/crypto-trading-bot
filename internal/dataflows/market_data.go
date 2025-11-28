@@ -1139,7 +1139,7 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 	}
 	sb.WriteString(fmt.Sprintf("EMA(20): %.1f vs. EMA(50): %.1f\n\n", ema20Val, ema50Val))
 
-	// === ATR(3) vs ATR(14) ===
+	// === ATR(3) vs ATR(7) vs ATR(14) ===
 	atr3Val := 0.0
 	atr7Val := 0.0
 	atr14Val := 0.0
@@ -1148,7 +1148,7 @@ func FormatLongerTimeframeReport(symbol string, timeframe string, ohlcvData []OH
 		atr3Val = indicators.ATR_3[lastIdx]
 	}
 	if len(indicators.ATR_7) > lastIdx && !math.IsNaN(indicators.ATR_7[lastIdx]) {
-		atr14Val = indicators.ATR_7[lastIdx]
+		atr7Val = indicators.ATR_7[lastIdx]
 	}
 	if len(indicators.ATR_14) > lastIdx && !math.IsNaN(indicators.ATR_14[lastIdx]) {
 		atr14Val = indicators.ATR_14[lastIdx]

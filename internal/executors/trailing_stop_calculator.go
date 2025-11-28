@@ -90,7 +90,7 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// 默认配置（用于未定义的币种）
 	defaultConfig := TrailingStopConfig{
 		InitialATRPeriod:      7, // 使用 ATR(7) - 标准 Wilder 周期
-		InitialATRMultiplier:  2.5,
+		InitialATRMultiplier:  3,
 		TrailingATRPeriod:     7, // 使用 ATR(7) - 标准 Wilder 周期
 		TrailingATRMultiplier: 3,
 		UpdateThreshold:       0.3, // 0.3% - update only if change exceeds this
@@ -104,9 +104,9 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// BTC - 波动较小，止损距离适中
 	configs["BTCUSDT"] = TrailingStopConfig{
 		InitialATRPeriod:      7,
-		InitialATRMultiplier:  2.5,
+		InitialATRMultiplier:  3.5,
 		TrailingATRPeriod:     7,
-		TrailingATRMultiplier: 3,
+		TrailingATRMultiplier: 3.5,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       6.0,
@@ -116,9 +116,9 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// ETH - 类似 BTC
 	configs["ETHUSDT"] = TrailingStopConfig{
 		InitialATRPeriod:      7,
-		InitialATRMultiplier:  2.5,
+		InitialATRMultiplier:  3.5,
 		TrailingATRPeriod:     7,
-		TrailingATRMultiplier: 3,
+		TrailingATRMultiplier: 3.5,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       6.0,
@@ -128,9 +128,9 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// SOL - 波动较大，止损距离稍宽
 	configs["SOLUSDT"] = TrailingStopConfig{
 		InitialATRPeriod:      7,
-		InitialATRMultiplier:  2.5,
+		InitialATRMultiplier:  3.5,
 		TrailingATRPeriod:     7,
-		TrailingATRMultiplier: 3, // Slightly wider / 稍微宽松一点
+		TrailingATRMultiplier: 3.5, // Slightly wider / 稍微宽松一点
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       8.0,
@@ -140,9 +140,9 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// BNB - 中等波动
 	configs["BNBUSDT"] = TrailingStopConfig{
 		InitialATRPeriod:      7,
-		InitialATRMultiplier:  2.5,
+		InitialATRMultiplier:  3.5,
 		TrailingATRPeriod:     7,
-		TrailingATRMultiplier: 3,
+		TrailingATRMultiplier: 3.5,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       7.0,
@@ -152,9 +152,9 @@ func getDefaultConfigs() map[string]TrailingStopConfig {
 	// XRP - 波动较大
 	configs["XRPUSDT"] = TrailingStopConfig{
 		InitialATRPeriod:      7,
-		InitialATRMultiplier:  2.5,
+		InitialATRMultiplier:  3.5,
 		TrailingATRPeriod:     7,
-		TrailingATRMultiplier: 3,
+		TrailingATRMultiplier: 3.5,
 		UpdateThreshold:       0.3,
 		MinStopDistance:       0.5,
 		MaxStopDistance:       8.0,
