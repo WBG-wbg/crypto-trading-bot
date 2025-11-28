@@ -74,7 +74,8 @@ type Config struct {
 	// Note: Trailing stop parameters (update threshold, ATR multiplier, etc.) are configured
 	// in internal/executors/trailing_stop_calculator.go for each symbol
 	// 注意：追踪止损参数（更新阈值、ATR倍数等）在 internal/executors/trailing_stop_calculator.go 中为每个币种配置
-	EnableStopLoss bool // 是否启用止损管理 / Enable stop-loss management
+	EnableStopLoss        bool // 是否启用止损管理 / Enable stop-loss management
+	TrailingStopATRPeriod int  // 追踪止损的 ATR 周期（从长期时间周期计算，推荐 3/7/14）/ ATR period for trailing stop (calculated from longer timeframe, recommended 3/7/14)
 
 	// Memory system
 	UseMemory  bool
@@ -169,7 +170,8 @@ func LoadConfig(pathToEnv string) (*Config, error) {
 		// Stop-loss management
 		// Trailing stop parameters are configured in internal/executors/trailing_stop_calculator.go
 		// 追踪止损参数在 internal/executors/trailing_stop_calculator.go 中配置
-		EnableStopLoss: viper.GetBool("ENABLE_STOPLOSS"),
+		EnableStopLoss:        viper.GetBool("ENABLE_STOPLOSS"),
+		TrailingStopATRPeriod: viper.GetInt("TRAILING_STOP_ATR_PERIOD"),
 
 		// Memory system
 		UseMemory:  viper.GetBool("USE_MEMORY"),
@@ -306,7 +308,8 @@ func setDefaults() {
 	// 止损管理默认值
 	// Trailing stop parameters are configured in internal/executors/trailing_stop_calculator.go
 	// 追踪止损参数在 internal/executors/trailing_stop_calculator.go 中配置
-	viper.SetDefault("ENABLE_STOPLOSS", true) // 启用止损管理 / Enable stop-loss management
+	viper.SetDefault("ENABLE_STOPLOSS", true)       // 启用止损管理 / Enable stop-loss management
+	viper.SetDefault("TRAILING_STOP_ATR_PERIOD", 7) // 追踪止损 ATR 周期，推荐 3（短期）/7（平衡）/14（长期）/ Trailing stop ATR period, recommended 3 (short) / 7 (balanced) / 14 (long)
 
 	viper.SetDefault("USE_MEMORY", true)
 	viper.SetDefault("MEMORY_TOP_K", 3)

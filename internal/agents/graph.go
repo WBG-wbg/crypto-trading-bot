@@ -361,9 +361,9 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 					if err != nil {
 						g.logger.Warning(fmt.Sprintf("  ⚠️  %s 更长期时间周期数据获取失败: %v", sym, err))
 					} else {
-						// Calculate indicators for longer timeframe
-						// 计算更长期时间周期的指标
-						longerIndicators = dataflows.CalculateIndicators(longerOHLCV)
+						// Calculate indicators for longer timeframe (with configurable ATR period for trailing stop)
+						// 计算更长期时间周期的指标（使用可配置的 ATR 周期用于追踪止损）
+						longerIndicators = dataflows.CalculateIndicators(longerOHLCV, g.config.TrailingStopATRPeriod)
 
 						// Generate longer timeframe report
 						// 生成更长期时间周期报告
@@ -639,7 +639,7 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 				// 只处理有持仓的币种
 				if g.stopLossManager.HasPosition(sym) {
 					// Get ATR_3 from longer timeframe data (preferred) or fallback to primary timeframe
-					// 优先从长期时间周期数据获取 ATR_3，如果不可用则回退到主时间周期
+					// 优先从长期时间周期数据获取 ATR_7，如果不可用则回退到主时间周期
 					g.state.mu.RLock()
 					symbolReport, exists := g.state.Reports[sym]
 					g.state.mu.RUnlock()
@@ -647,32 +647,32 @@ func (g *SimpleTradingGraph) BuildGraph(ctx context.Context) (compose.Runnable[m
 					if !exists {
 						g.logger.Warning(fmt.Sprintf("  ⚠️  %s 有持仓但缺少市场数据，无法更新追踪止损", sym))
 					} else {
-						var latestATR3 float64
+						var latestATR7 float64
 						var atrSource string // 用于日志显示 ATR 来源 / For logging ATR source
 
-						// Priority 1: Use longer timeframe ATR_3 (e.g., 1h)
-						// 优先级1：使用长期时间周期的 ATR_3（如 1h）
-						if symbolReport.LongerTechnicalIndicators != nil && len(symbolReport.LongerTechnicalIndicators.ATR_3) > 0 {
-							latestATR3 = symbolReport.LongerTechnicalIndicators.ATR_3[len(symbolReport.LongerTechnicalIndicators.ATR_3)-1]
+						// Priority 1: Use longer timeframe ATR_7 (e.g., 1h)
+						// 优先级1：使用长期时间周期的 ATR_7（如 1h）
+						if symbolReport.LongerTechnicalIndicators != nil && len(symbolReport.LongerTechnicalIndicators.ATR_7) > 0 {
+							latestATR7 = symbolReport.LongerTechnicalIndicators.ATR_7[len(symbolReport.LongerTechnicalIndicators.ATR_7)-1]
 							atrSource = fmt.Sprintf("%s", g.config.CryptoLongerTimeframe)
 						} else if symbolReport.TechnicalIndicators != nil && len(symbolReport.TechnicalIndicators.ATR_3) > 0 {
-							// Fallback: Use primary timeframe ATR_3 (e.g., 3m)
-							// 回退：使用主时间周期的 ATR_3（如 3m）
-							latestATR3 = symbolReport.TechnicalIndicators.ATR_3[len(symbolReport.TechnicalIndicators.ATR_3)-1]
+							// Fallback: Use primary timeframe ATR_7 (e.g., 3m)
+							// 回退：使用主时间周期的 ATR_7（如 3m）
+							latestATR7 = symbolReport.TechnicalIndicators.ATR_7[len(symbolReport.TechnicalIndicators.ATR_3)-1]
 							atrSource = fmt.Sprintf("%s", g.config.CryptoTimeframe)
 							g.logger.Warning(fmt.Sprintf("  ⚠️  %s 长期数据不可用，使用主时间周期(%s)的ATR_3", sym, g.config.CryptoTimeframe))
 						} else {
 							g.logger.Warning(fmt.Sprintf("  ⚠️  %s 有持仓但所有时间周期的ATR_3数据均为空，无法更新追踪止损", sym))
-							latestATR3 = 0 // 设为0表示无效 / Set to 0 to indicate invalid
+							latestATR7 = 0 // 设为0表示无效 / Set to 0 to indicate invalid
 						}
 
-						if latestATR3 > 0 {
+						if latestATR7 > 0 {
 							// Call AutoUpdateTrailingStop to update stop-loss based on local calculation
 							// 调用 AutoUpdateTrailingStop 基于本地计算更新止损
-							if err := g.stopLossManager.AutoUpdateTrailingStop(ctx, sym, latestATR3); err != nil {
+							if err := g.stopLossManager.AutoUpdateTrailingStop(ctx, sym, latestATR7); err != nil {
 								g.logger.Warning(fmt.Sprintf("  ⚠️  %s 自动追踪止损更新失败: %v", sym, err))
 							} else {
-								g.logger.Info(fmt.Sprintf("  ✓ %s 追踪止损检查完成 (ATR_3=%.2f, 来源:%s)", sym, latestATR3, atrSource))
+								g.logger.Info(fmt.Sprintf("  ✓ %s 追踪止损检查完成 (ATR_3=%.2f, 来源:%s)", sym, latestATR7, atrSource))
 							}
 						}
 					}
