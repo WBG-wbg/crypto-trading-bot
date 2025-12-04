@@ -71,6 +71,10 @@ type Position struct {
 	PartialTPExecuted bool    // 是否已执行分批止盈 / Whether partial TP has been executed
 	ATR               float64 // ATR 值用于动态追踪距离 / ATR value for dynamic trailing distance
 
+	// Take-profit management
+	// 止盈管理
+	TakeProfitConfig *TakeProfitConfig // 分批止盈配置 / Take-profit configuration
+
 	// Order management
 	// 订单管理
 	StopLossOrderID string // 当前止损单 ID / Stop-loss order ID

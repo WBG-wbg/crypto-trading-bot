@@ -39,15 +39,16 @@ import (
 //   - No duplicate execution risk
 //     无重复执行风险
 type StopLossManager struct {
-	positions  map[string]*Position    // symbol -> Position
-	executor   *BinanceExecutor        // 执行器 / Executor
-	config     *config.Config          // 配置 / Config
-	logger     *logger.ColorLogger     // 日志 / Logger
-	storage    *storage.Storage        // 数据库 / Database
-	calculator *TrailingStopCalculator // 追踪止损计算器 / Trailing stop calculator
-	mu         sync.RWMutex            // 读写锁 / RW mutex
-	ctx        context.Context         // 上下文 / Context
-	cancel     context.CancelFunc      // 取消函数 / Cancel function
+	positions        map[string]*Position    // symbol -> Position
+	executor         *BinanceExecutor        // 执行器 / Executor
+	config           *config.Config          // 配置 / Config
+	logger           *logger.ColorLogger     // 日志 / Logger
+	storage          *storage.Storage        // 数据库 / Database
+	calculator       *TrailingStopCalculator // 追踪止损计算器 / Trailing stop calculator
+	takeProfitMgr    *TakeProfitManager      // 分批止盈管理器 / Take-profit manager
+	mu               sync.RWMutex            // 读写锁 / RW mutex
+	ctx              context.Context         // 上下文 / Context
+	cancel           context.CancelFunc      // 取消函数 / Cancel function
 }
 
 // NewStopLossManager creates a new StopLossManager
@@ -55,14 +56,15 @@ type StopLossManager struct {
 func NewStopLossManager(cfg *config.Config, executor *BinanceExecutor, log *logger.ColorLogger, db *storage.Storage) *StopLossManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StopLossManager{
-		positions:  make(map[string]*Position),
-		executor:   executor,
-		config:     cfg,
-		logger:     log,
-		storage:    db,
-		calculator: NewTrailingStopCalculator(log), // 初始化追踪止损计算器 / Initialize trailing stop calculator
-		ctx:        ctx,
-		cancel:     cancel,
+		positions:     make(map[string]*Position),
+		executor:      executor,
+		config:        cfg,
+		logger:        log,
+		storage:       db,
+		calculator:    NewTrailingStopCalculator(log),         // 初始化追踪止损计算器 / Initialize trailing stop calculator
+		takeProfitMgr: NewTakeProfitManager(cfg, executor, log, db), // 初始化分批止盈管理器 / Initialize take-profit manager
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 }
 
@@ -82,6 +84,10 @@ func (sm *StopLossManager) RegisterPosition(pos *Position) {
 	pos.HighestPrice = pos.EntryPrice // 初始化最高价/最低价 / Initialize highest/lowest
 	pos.CurrentPrice = pos.EntryPrice
 	pos.StopLossType = "fixed" // LLM 驱动的固定止损 / LLM-driven fixed stop
+
+	// Initialize take-profit levels
+	// 初始化分批止盈级别
+	sm.takeProfitMgr.InitializeTakeProfitLevels(pos)
 
 	sm.positions[normalizedSymbol] = pos
 	sm.logger.Success(fmt.Sprintf("【%s】持仓已注册，入场价: %.2f, 初始止损: %.2f, 当前止损: %.2f",
@@ -464,16 +470,48 @@ func (sm *StopLossManager) AutoUpdateTrailingStop(ctx context.Context, symbol st
 		side,
 	)
 
-	// 2. Validate stop-loss price is in favorable direction
-	// 2. 验证止损价朝有利方向移动
+	// 2. Check take-profit floor (hybrid mode coordination)
+	// 2. 检查止盈底线（混合模式协调）
+	// If any TP level has been executed, ensure trailing stop doesn't go below the TP floor
+	// 如果任何止盈级别已执行，确保追踪止损不低于止盈底线
+	sm.mu.RLock()
+	pos, exists = sm.positions[normalizedSymbol]
+	sm.mu.RUnlock()
+	if exists {
+		minStopLoss, hasFloor := sm.takeProfitMgr.GetMinimumStopLoss(pos)
+		if hasFloor {
+			// Apply floor protection based on position side
+			// 根据持仓方向应用底线保护
+			if side == "long" {
+				// Long: stop-loss must be >= minimum (higher is better)
+				// 多仓：止损必须 >= 最低值（更高更好）
+				if newStopLoss < minStopLoss {
+					sm.logger.Info(fmt.Sprintf("【%s】🛡️ 追踪止损 (%.2f) 低于止盈底线 (%.2f)，使用底线价格",
+						symbol, newStopLoss, minStopLoss))
+					newStopLoss = minStopLoss
+				}
+			} else {
+				// Short: stop-loss must be <= minimum (lower is better)
+				// 空仓：止损必须 <= 最低值（更低更好）
+				if newStopLoss > minStopLoss {
+					sm.logger.Info(fmt.Sprintf("【%s】🛡️ 追踪止损 (%.2f) 高于止盈底线 (%.2f)，使用底线价格",
+						symbol, newStopLoss, minStopLoss))
+					newStopLoss = minStopLoss
+				}
+			}
+		}
+	}
+
+	// 3. Validate stop-loss price is in favorable direction
+	// 3. 验证止损价朝有利方向移动
 	if !sm.calculator.IsValidUpdate(side, currentStopLoss, newStopLoss) {
 		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价未朝有利方向移动 (当前: %.2f → 计算: %.2f)，保持原止损",
 			symbol, currentStopLoss, newStopLoss))
 		return nil
 	}
 
-	// 3. Check if change is significant enough (exceeds threshold)
-	// 3. 检查变化是否足够大（超过阈值）
+	// 4. Check if change is significant enough (exceeds threshold)
+	// 4. 检查变化是否足够大（超过阈值）
 	if !sm.calculator.ShouldUpdate(symbol, currentStopLoss, newStopLoss) {
 		changePercent := math.Abs((newStopLoss-currentStopLoss)/currentStopLoss) * 100
 		sm.logger.Info(fmt.Sprintf("【%s】💡 止损价变化较小 (%.2f%%)，跳过更新以避免频繁调整",
@@ -481,8 +519,8 @@ func (sm *StopLossManager) AutoUpdateTrailingStop(ctx context.Context, symbol st
 		return nil
 	}
 
-	// 4. Call existing UpdateStopLoss method to update Binance stop order
-	// 4. 调用现有的 UpdateStopLoss 方法更新币安止损单
+	// 5. Call existing UpdateStopLoss method to update Binance stop order
+	// 5. 调用现有的 UpdateStopLoss 方法更新币安止损单
 	priceType := "最低价"
 	if side == "long" {
 		priceType = "最高价"
@@ -1130,6 +1168,85 @@ func (sm *StopLossManager) GetAllPositions() []*Position {
 		positions = append(positions, pos)
 	}
 	return positions
+}
+
+// MonitorPartialTakeProfit monitors and executes partial take-profit for all positions
+// MonitorPartialTakeProfit 监控并执行所有持仓的分批止盈
+//
+// This method should be called periodically (e.g., every trading interval) to check
+// if any take-profit targets have been reached and execute partial closes.
+// 此方法应定期调用（例如每个交易间隔）以检查是否达到任何止盈目标并执行部分平仓。
+//
+// It coordinates with trailing stop by updating the stop-loss floor after each TP execution.
+// 它通过在每次止盈执行后更新止损底线来与追踪止损协调。
+func (sm *StopLossManager) MonitorPartialTakeProfit(ctx context.Context, symbol string, currentPrice float64) error {
+	// Normalize symbol to match internal storage format
+	// 标准化符号以匹配内部存储格式
+	normalizedSymbol := sm.config.GetBinanceSymbolFor(symbol)
+
+	// Get position under lock
+	// 在锁保护下获取持仓
+	sm.mu.RLock()
+	pos, exists := sm.positions[normalizedSymbol]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return nil // No position, nothing to monitor
+	}
+
+	// Check if take-profit is enabled
+	// 检查是否启用分批止盈
+	if pos.TakeProfitConfig == nil || !pos.TakeProfitConfig.Enabled {
+		return nil
+	}
+
+	// Monitor and execute take-profit
+	// 监控并执行止盈
+	executedCount, err := sm.takeProfitMgr.MonitorAndExecute(ctx, pos, currentPrice)
+	if err != nil {
+		sm.logger.Error(fmt.Sprintf("【%s】❌ 分批止盈执行失败: %v", symbol, err))
+		return fmt.Errorf("分批止盈执行失败: %w", err)
+	}
+
+	if executedCount == 0 {
+		// No TP executed, nothing to update
+		// 没有执行止盈，无需更新
+		return nil
+	}
+
+	// TP was executed, need to update stop-loss to the new floor
+	// 止盈已执行，需要将止损更新到新底线
+	sm.mu.RLock()
+	pos, exists = sm.positions[normalizedSymbol]
+	sm.mu.RUnlock()
+
+	if !exists {
+		// Position was fully closed
+		// 持仓已完全关闭
+		sm.logger.Info(fmt.Sprintf("【%s】持仓已完全平仓，从止损管理器移除", symbol))
+		return sm.ClosePosition(ctx, symbol, currentPrice, "所有止盈级别已完成", pos.UnrealizedPnL)
+	}
+
+	// Get the new minimum stop-loss from TP manager
+	// 从止盈管理器获取新的最低止损价
+	minStopLoss, hasFloor := sm.takeProfitMgr.GetMinimumStopLoss(pos)
+	if hasFloor && minStopLoss != pos.CurrentStopLoss {
+		// Update stop-loss to the new floor
+		// 更新止损到新底线
+		reason := fmt.Sprintf("分批止盈后移动止损（级别 %d 已执行）", executedCount)
+		err := sm.UpdateStopLoss(ctx, symbol, minStopLoss, reason)
+		if err != nil {
+			sm.logger.Warning(fmt.Sprintf("⚠️  更新止损失败: %v", err))
+			return fmt.Errorf("更新止损失败: %w", err)
+		}
+	}
+
+	// Log current TP status
+	// 记录当前止盈状态
+	tpStatus := sm.takeProfitMgr.GetStatus(pos)
+	sm.logger.Info(fmt.Sprintf("【%s】止盈状态: %s, 剩余仓位: %.4f", symbol, tpStatus, pos.Quantity))
+
+	return nil
 }
 
 // Stop stops the stop-loss manager
