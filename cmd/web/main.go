@@ -295,6 +295,20 @@ func main() {
 	// 	globalStopLossManager.MonitorPositions(10 * time.Second)
 	// }()
 
+	// Start real-time partial take-profit monitoring in background
+	// 在后台启动分批止盈实时监控（独立于交易分析周期）
+	go func() {
+		// Use configured interval for real-time monitoring (default 10 seconds)
+		// 使用配置的间隔进行实时监控（默认 10 秒）
+		monitorInterval := time.Duration(cfg.TakeProfitMonitoringInterval) * time.Second
+		if cfg.TakeProfitMonitoringInterval <= 0 {
+			// Fallback to 10 seconds if not set or invalid
+			// 如果未设置或无效，回退到 10 秒
+			monitorInterval = 10 * time.Second
+		}
+		globalStopLossManager.MonitorPartialTakeProfitRealtime(monitorInterval)
+	}()
+
 	// Start balance history recording in background
 	// 在后台启动余额历史记录
 	go func() {

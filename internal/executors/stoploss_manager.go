@@ -1249,6 +1249,114 @@ func (sm *StopLossManager) MonitorPartialTakeProfit(ctx context.Context, symbol 
 	return nil
 }
 
+// MonitorPartialTakeProfitRealtime monitors and executes partial take-profit in real-time
+// MonitorPartialTakeProfitRealtime 实时监控并执行分批止盈
+//
+// This method runs in a separate goroutine and continuously monitors all positions
+// for take-profit opportunities, independent of the main trading cycle.
+// 此方法在独立的 goroutine 中运行，持续监控所有持仓的止盈机会，独立于主交易周期。
+//
+// Parameters:
+// 参数：
+//   - interval: Monitoring interval (e.g., 10 seconds) / 监控间隔（如 10 秒）
+func (sm *StopLossManager) MonitorPartialTakeProfitRealtime(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	sm.logger.Success(fmt.Sprintf("🎯 启动分批止盈实时监控，间隔: %v", interval))
+
+	for {
+		select {
+		case <-sm.ctx.Done():
+			sm.logger.Info("分批止盈实时监控已停止")
+			return
+
+		case <-ticker.C:
+			// Get all active positions
+			// 获取所有活跃持仓
+			sm.mu.RLock()
+			positions := make([]*Position, 0, len(sm.positions))
+			for _, pos := range sm.positions {
+				positions = append(positions, pos)
+			}
+			sm.mu.RUnlock()
+
+			// Monitor each position
+			// 监控每个持仓
+			for _, pos := range positions {
+				// Skip if take-profit is not enabled
+				// 如果未启用分批止盈则跳过
+				if pos.TakeProfitConfig == nil || !pos.TakeProfitConfig.Enabled {
+					continue
+				}
+
+				// Get current price from Binance
+				// 从币安获取当前价格
+				ctx, cancel := context.WithTimeout(sm.ctx, 5*time.Second)
+				currentPrice, err := sm.getCurrentPrice(ctx, pos.Symbol)
+				cancel()
+
+				if err != nil {
+					sm.logger.Warning(fmt.Sprintf("⚠️  获取 %s 当前价格失败: %v", pos.Symbol, err))
+					continue
+				}
+
+				// Update position current price in memory
+				// 更新内存中的持仓当前价格
+				sm.mu.Lock()
+				if p, exists := sm.positions[pos.Symbol]; exists {
+					p.CurrentPrice = currentPrice
+				}
+				sm.mu.Unlock()
+
+				// Monitor and execute take-profit
+				// 监控并执行止盈
+				ctx, cancel = context.WithTimeout(sm.ctx, 30*time.Second)
+				executedCount, err := sm.takeProfitMgr.MonitorAndExecute(ctx, pos, currentPrice)
+				cancel()
+
+				if err != nil {
+					sm.logger.Error(fmt.Sprintf("【%s】❌ 分批止盈执行失败: %v", pos.Symbol, err))
+					continue
+				}
+
+				if executedCount > 0 {
+					// TP was executed, update stop-loss to the new floor
+					// 止盈已执行，需要将止损更新到新底线
+					sm.mu.RLock()
+					updatedPos, exists := sm.positions[pos.Symbol]
+					sm.mu.RUnlock()
+
+					if !exists {
+						// Position was fully closed
+						// 持仓已完全关闭
+						sm.logger.Info(fmt.Sprintf("【%s】持仓已完全平仓，从止损管理器移除", pos.Symbol))
+						ctx, cancel = context.WithTimeout(sm.ctx, 30*time.Second)
+						sm.ClosePosition(ctx, pos.Symbol, currentPrice, "所有止盈级别已完成", updatedPos.UnrealizedPnL)
+						cancel()
+						continue
+					}
+
+					// Get the new minimum stop-loss from TP manager
+					// 从止盈管理器获取新的最低止损价
+					minStopLoss, hasFloor := sm.takeProfitMgr.GetMinimumStopLoss(updatedPos)
+					if hasFloor && minStopLoss != updatedPos.CurrentStopLoss {
+						// Update stop-loss to the new floor
+						// 更新止损到新底线
+						reason := fmt.Sprintf("分批止盈后移动止损（级别 %d 已执行）", executedCount)
+						ctx, cancel = context.WithTimeout(sm.ctx, 30*time.Second)
+						err := sm.UpdateStopLoss(ctx, pos.Symbol, minStopLoss, reason)
+						cancel()
+						if err != nil {
+							sm.logger.Warning(fmt.Sprintf("⚠️  更新止损失败: %v", err))
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // Stop stops the stop-loss manager
 // Stop 停止止损管理器
 func (sm *StopLossManager) Stop() {
