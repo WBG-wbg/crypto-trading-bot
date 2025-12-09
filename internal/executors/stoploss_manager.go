@@ -979,15 +979,26 @@ func (sm *StopLossManager) placeStopLossOrder(ctx context.Context, pos *Position
 
 	binanceSymbol := sm.config.GetBinanceSymbolFor(pos.Symbol)
 
-	// Create stop-loss order
-	// 创建止损单
+	// Create stop-loss order using STOP_MARKET with MARK_PRICE workingType (币安新 API 要求)
+	// 使用 STOP_MARKET 订单类型 + MARK_PRICE 工作类型（币安新 API 要求）
+	//
+	// 币安 API 更新说明 / Binance API Update Note:
+	// - 2024年起，STOP_MARKET 订单必须指定 workingType 参数
+	// - Starting from 2024, STOP_MARKET orders must specify workingType parameter
+	// - workingType 默认为 CONTRACT_PRICE，但推荐使用 MARK_PRICE 防止插针
+	// - workingType defaults to CONTRACT_PRICE, but MARK_PRICE is recommended to prevent wicks
+	//
+	// WorkingType 说明 / WorkingType explanation:
+	// - CONTRACT_PRICE: 使用最新成交价触发 / Trigger using last price
+	// - MARK_PRICE: 使用标记价格触发（推荐，防止插针）/ Trigger using mark price (recommended, prevents wicks)
 	order, err := sm.executor.client.NewCreateOrderService().
 		Symbol(binanceSymbol).
 		Side(orderSide).
-		Type(futures.OrderTypeStopMarket).
-		StopPrice(fmt.Sprintf("%.2f", stopPrice)).
+		Type(futures.OrderTypeStopMarket).         // 使用 STOP_MARKET / Use STOP_MARKET
+		StopPrice(fmt.Sprintf("%.2f", stopPrice)). // 触发价格 / Trigger price
 		Quantity(fmt.Sprintf("%.4f", pos.Quantity)).
-		ReduceOnly(true). // 只平仓不开仓 / Close only
+		WorkingType(futures.WorkingTypeMarkPrice). // ⚠️ 关键：必须指定 workingType / CRITICAL: Must specify workingType
+		ReduceOnly(true).                          // 只平仓不开仓 / Close only
 		Do(ctx)
 
 	if err != nil {
